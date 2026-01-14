@@ -31,14 +31,14 @@ const ApiTester: React.FC<ApiTesterProps> = ({ apiUrl, apiKey }) => {
 
   // Descriptions for each OpenAI method
   const methodDescriptions: Record<string, string> = {
-    '/v1/chat/completions': 'Generates chat completions using a language model, supporting conversation-style interactions with multiple messages.',
-    '/v1/completions': 'Generates text completions from a given prompt, supporting various text generation tasks.',
-    '/v1/embeddings': 'Generates embeddings for input text, converting text into numerical vectors that capture semantic meaning.',
-    '/v1/images/generations': 'Generates images from text prompts using image generation models like DALL-E.',
-    '/v1/audio/transcriptions': 'Transcribes audio files into text using speech recognition models like Whisper.',
-    '/v1/audio/translations': 'Translates audio files into text in a different language using speech recognition models like Whisper.',
-    '/v1/fine-tunes': 'Creates fine-tuned versions of existing models for specific tasks by training on custom datasets.',
-    '/v1/models': 'Retrieves a list of available models that can be used with the API.'
+    '/v1/chat/completions': 'Generates chat completions using a language model, supporting conversation-style interactions with multiple messages.<br><br>Request Parameters (JSON):<br><br><span class="font-semibold">model</span>: string (e.g. gpt-3.5-turbo) - The model to use for generation<br><span class="font-semibold">messages</span>: array of message objects - Array of message objects<br>&nbsp;&nbsp;<span class="font-semibold">role</span>: string (user, assistant, or system) - Role of the message sender<br>&nbsp;&nbsp;<span class="font-semibold">content</span>: string - Content of the message<br><span class="font-semibold">temperature</span>: number (0.0 to 2.0) - Controls randomness (0.0 = deterministic, 2.0 = maximum randomness)<br><span class="font-semibold">max_tokens</span>: integer - Maximum number of tokens to generate<br><span class="font-semibold">top_p</span>: number (0.0 to 1.0) - Controls diversity via nucleus sampling<br><span class="font-semibold">frequency_penalty</span>: number (-2.0 to 2.0) - Modifies probability of tokens based on frequency<br><span class="font-semibold">presence_penalty</span>: number (-2.0 to 2.0) - Modifies probability of tokens based on presence<br><span class="font-semibold">stream</span>: boolean - Whether to stream responses',
+    '/v1/completions': 'Generates text completions from a given prompt, supporting various text generation tasks.<br><br>Request Parameters (JSON):<br><br><span class="font-semibold">model</span>: string (e.g. gpt-3.5-turbo) - The model to use for generation<br><span class="font-semibold">prompt</span>: string - Text to complete<br><span class="font-semibold">temperature</span>: number (0.0 to 2.0) - Controls randomness (0.0 = deterministic, 2.0 = maximum randomness)<br><span class="font-semibold">max_tokens</span>: integer - Maximum number of tokens to generate<br><span class="font-semibold">top_p</span>: number (0.0 to 1.0) - Controls diversity via nucleus sampling<br><span class="font-semibold">frequency_penalty</span>: number (-2.0 to 2.0) - Modifies probability of tokens based on frequency<br><span class="font-semibold">presence_penalty</span>: number (-2.0 to 2.0) - Modifies probability of tokens based on presence<br><span class="font-semibold">stream</span>: boolean - Whether to stream responses',
+    '/v1/embeddings': 'Generates embeddings for input text, converting text into numerical vectors that capture semantic meaning.<br><br>Request Parameters (JSON):<br><br><span class="font-semibold">model</span>: string (e.g. text-embedding-ada-002) - The model to use for generating embeddings<br><span class="font-semibold">input</span>: string - Text to generate embeddings for',
+    '/v1/images/generations': 'Generates images from text prompts using image generation models like DALL-E.<br><br>Request Parameters (JSON):<br><br><span class="font-semibold">model</span>: string (e.g. dall-e-3) - The model to use for image generation<br><span class="font-semibold">prompt</span>: string - Text description of the image to generate<br><span class="font-semibold">n</span>: integer (1-10) - Number of images to generate<br><span class="font-semibold">size</span>: string (1024x1024, 1024x1792, or 1792x1024) - Dimensions of the generated image',
+    '/v1/audio/transcriptions': 'Transcribes audio files into text using speech recognition models like Whisper.<br><br>Request Parameters (JSON):<br><br><span class="font-semibold">model</span>: string (e.g. whisper-1) - The model to use for transcription<br><span class="font-semibold">file</span>: string - Audio file to transcribe<br><span class="font-semibold">prompt</span>: string - Text to guide the transcription',
+    '/v1/audio/translations': 'Translates audio files into text in a different language using speech recognition models like Whisper.<br><br>Request Parameters (JSON):<br><br><span class="font-semibold">model</span>: string (e.g. whisper-1) - The model to use for translation<br><span class="font-semibold">file</span>: string - Audio file to translate<br><span class="font-semibold">prompt</span>: string - Text to guide the translation',
+    '/v1/fine-tunes': 'Creates fine-tuned versions of existing models for specific tasks by training on custom datasets.<br><br>Request Parameters (JSON):<br><br><span class="font-semibold">model</span>: string (e.g. gpt-3.5-turbo) - Base model to fine-tune<br><span class="font-semibold">training_file</span>: string - ID of the file containing training data',
+    '/v1/models': 'Retrieves a list of available models that can be used with the API.<br><br>No request parameters needed.'
   };
 
   const openaiMethods = [
@@ -199,7 +199,6 @@ const ApiTester: React.FC<ApiTesterProps> = ({ apiUrl, apiKey }) => {
   }, [selectedMethod, defaultModel]);
 
 
-
   return (
     <div className="max-w-4xl mx-auto p-6">
       <h1 className="text-3xl font-bold text-gray-800 mb-6">OpenAI Compatible API Tester</h1>
@@ -306,7 +305,11 @@ const ApiTester: React.FC<ApiTesterProps> = ({ apiUrl, apiKey }) => {
           <div className="mb-4">
             <label className="block text-sm font-medium text-gray-600 mb-1">Method Description</label>
             <div className="bg-blue-50 border border-blue-200 text-blue-700 px-4 py-3 rounded-md">
-              {methodDescriptions[selectedMethod] || 'No description available for this method.'}
+              {methodDescriptions[selectedMethod] ? (
+                <div dangerouslySetInnerHTML={{ __html: methodDescriptions[selectedMethod] }} />
+              ) : (
+                'No description available for this method.'
+              )}
             </div>
           </div>
           
