@@ -34,13 +34,14 @@ const ApiTester: React.FC<ApiTesterProps> = ({ apiUrl, apiKey }) => {
     '/v1/fine-tunes/list': '',
     '/v1/models/delete': '{"model": "model-id"}',
     '/v1/models/list': '',
-    '/v1/models/retrieve': '{"model": "model-id"}'
+    '/v1/models/retrieve': '{"model": "model-id"}',
+    '/v1/responses': '{"input": "Hello", "model": "llama3"}'
   };
 
-  // Descriptions for each OpenAI method
+// Descriptions for each OpenAI method
   const methodDescriptions: Record<string, string> = {
     '/v1/chat/completions': 'Generates chat completions using a language model, supporting conversation-style interactions with multiple messages.<br><br>Request Parameters (JSON):<br><br><span class="font-semibold">model</span>: string (e.g. gpt-3.5-turbo) - The model to use for generation<br><span class="font-semibold">messages</span>: array of message objects - Array of message objects<br>&nbsp;&nbsp;<span class="font-semibold">role</span>: string (user, assistant, or system) - Role of the message sender<br>&nbsp;&nbsp;<span class="font-semibold">content</span>: string - Content of the message<br><span class="font-semibold">temperature</span>: number (0.0 to 2.0) - Controls randomness (0.0 = deterministic, 2.0 = maximum randomness)<br><span class="font-semibold">max_tokens</span>: integer - Maximum number of tokens to generate<br><span class="font-semibold">top_p</span>: number (0.0 to 1.0) - Controls diversity via nucleus sampling<br><span class="font-semibold">frequency_penalty</span>: number (-2.0 to 2.0) - Modifies probability of tokens based on frequency<br><span class="font-semibold">presence_penalty</span>: number (-2.0 to 2.0) - Modifies probability of tokens based on presence<br><span class="font-semibold">stream</span>: boolean - Whether to stream responses',
-    '/v1/completions': 'Generates text completions from a given prompt, supporting various text generation tasks.<br><br>Request Parameters (JSON):<br><br><span class="font-semibold">model</span>: string (e.g. gpt-3.5-turbo) - The model to use for generation<br><span class="font-semibold">prompt</span>: string - Text to complete<br><span class="font-semibold">temperature</span>: number (0.0 to 2.0) - Controls randomness (0.0 = deterministic, 2.0 = maximum randomness)<br><span class="font-semibold">max_tokens</d> integer - Maximum number of tokens to generate<br><span class="font-semibold">top_p</span>: number (0.0 to 1.0) - Controls diversity via nucleus sampling<br><span class="font-semibold">frequency_penalty</span>: number (-2.0 to 2.0) - Modifies probability of tokens based on frequency<br><span class="font-semibold">presence_penalty</span>: number (-2.0 to 2.0) - Modifies probability of tokens based on presence<br><span class="font-semibold">stream</span>: boolean - Whether to stream responses',
+    '/v1/completions': 'Generates text completions from a given prompt, supporting various text generation tasks.<br><br>Request Parameters (JSON):<br><br><span class="font-semibold">model</span>: string (e.g. gpt-3.5-turbo) - The model to use for generation<br><span class="font-semibold">prompt</span>: string - Text to complete<br><span class="font-semibold">temperature</span>: number (0.0 to 2.0) - Controls randomness (0.0 = deterministic, 2.0 = maximum randomness)<br><span class="font-semibold">max_tokens</span>: integer - Maximum number of tokens to generate<br><span class="font-semibold">top_p</span>: number (0.0 to 1.0) - Controls diversity via nucleus sampling<br><span class="font-semibold">frequency_penalty</span>: number (-2.0 to 2.0) - Modifies probability of tokens based on frequency<br><span class="font-semibold">presence_penalty</span>: number (-2.0 to 2.0) - Modifies probability of tokens based on presence<br><span class="font-semibold">stream</span>: boolean - Whether to stream responses',
     '/v1/embeddings': 'Generates embeddings for input text, converting text into numerical vectors that capture semantic meaning.<br><br>Request Parameters (JSON):<br><br><span class="font-semibold">model</span>: string (e.g. text-embedding-ada-002) - The model to use for generating embeddings<br><span class="font-semibold">input</span>: string - Text to generate embeddings for',
     '/v1/images/generations': 'Generates images from text prompts using image generation models like DALL-E.<br><br>Request Parameters (JSON):<br><br><span class="font-semibold">model</span>: string (e.g. dall-e-3) - The model to use for image generation<br><span class="font-semibold">prompt</span>: string - Text description of the image to generate<br><span class="font-semibold">n</span>: integer (1-10) - Number of images to generate<br><span class="font-semibold">size</span>: string (1024x1024, 1024x1792, or 1792x1024) - Dimensions of the generated image',
     '/v1/audio/transcriptions': 'Transcribes audio files into text using speech recognition models like Whisper.<br><br>Request Parameters (JSON):<br><br><span class="font-semibold">model</span>: string (e.g. whisper-1) - The model to use for transcription<br><span class="font-semibold">file</span>: string - Audio file to transcribe<br><span class="font-semibold">prompt</span>: string - Text to guide the transcription',
@@ -54,7 +55,8 @@ const ApiTester: React.FC<ApiTesterProps> = ({ apiUrl, apiKey }) => {
     '/v1/fine-tunes/list': 'Lists fine-tuning jobs.<br><br>No request parameters needed.',
     '/v1/models/delete': 'Deletes a fine-tuned model.<br><br>Request Parameters (JSON):<br><br><span class="font-semibold">model</span>: string - ID of the model to delete',
     '/v1/models/list': 'Lists all models available.<br><br>No request parameters needed.',
-    '/v1/models/retrieve': 'Retrieves information about a specific model.<br><br>Request Parameters (JSON):<br><br><span class="font-semibold">model</span>: string - ID of the model to retrieve'
+    '/v1/models/retrieve': 'Retrieves information about a specific model.<br><br>Request Parameters (JSON):<br><br><span class="font-semibold">model</span>: string - ID of the model to retrieve',
+    '/v1/responses': 'Endpoint for receiving responses from LM Studio server.<br><br>Request Parameters (JSON):<br><br><span class="font-semibold">input</span>: string - Text input to generate response for<br><span class="font-semibold">model</span>: string - Model name to use for generation<br><span class="font-semibold">temperature</span>: number (0.0 to 2.0) - Controls randomness (0.0 = deterministic, 2.0 = maximum randomness)<br><span class="font-semibold">max_tokens</span>: integer - Maximum number of tokens to generate<br><span class="font-semibold">top_p</span>: number (0.0 to 1.0) - Controls diversity via nucleus sampling<br><span class="font-semibold">frequency_penalty</span>: number (-2.0 to 2.0) - Modifies probability of tokens based on frequency<br><span class="font-semibold">presence_penalty</span>: number (-2.0 to 2.0) - Modifies probability of tokens based on presence<br><span class="font-semibold">stream</span>: boolean - Whether to stream responses'
   };
 
   const openaiMethods = [
@@ -73,7 +75,8 @@ const ApiTester: React.FC<ApiTesterProps> = ({ apiUrl, apiKey }) => {
      '/v1/fine-tunes/list',
      '/v1/models/delete',
      '/v1/models/list',
-     '/v1/models/retrieve'
+     '/v1/models/retrieve',
+      '/v1/responses'
    ];
 
   const apiUrlOptions = [
@@ -93,23 +96,23 @@ const ApiTester: React.FC<ApiTesterProps> = ({ apiUrl, apiKey }) => {
       selectedMethod,
       params
     });
-    
+
     setLoading(true);
     setError(null);
     setResponse(null);
-    
+
     try {
       console.log('Attempting to send request...');
-      
+
       // Use the proxy server for local API requests
-      const proxyUrl = apiUrlValue.includes('localhost:1234') 
+      const proxyUrl = apiUrlValue.includes('localhost:1234')
         ? `http://localhost:3001/${selectedMethod.startsWith('/') ? selectedMethod : '/' + selectedMethod}`
         : `${apiUrlValue}${selectedMethod.startsWith('/') ? selectedMethod : '/' + selectedMethod}`;
-      
+
       console.log('Constructed proxy URL:', proxyUrl);
-      
+
       let res;
-      
+
       // Handle GET request for /v1/models
       if (selectedMethod === '/v1/models') {
         console.log('Sending GET request...');
@@ -137,7 +140,7 @@ const ApiTester: React.FC<ApiTesterProps> = ({ apiUrl, apiKey }) => {
         } else {
           console.log('No parameters provided, using empty body');
         }
-        
+
         console.log('Sending POST request with body:', requestBody);
         res = await fetch(proxyUrl, {
           method: 'POST',
@@ -162,10 +165,10 @@ const ApiTester: React.FC<ApiTesterProps> = ({ apiUrl, apiKey }) => {
       if (!res.ok) {
         console.log('Response not OK, getting error details...');
         const errorData = await res.json().catch(() => ({}));
-        const errorMessage = errorData.error?.message || 
-                          errorData.message || 
+        const errorMessage = errorData.error?.message ||
+                          errorData.message ||
                           `HTTP Error: ${res.status} - ${res.statusText}`;
-        
+
         console.error('API Error:', errorMessage);
         setError(`API Error: ${errorMessage}`);
         return;
@@ -211,13 +214,13 @@ const ApiTester: React.FC<ApiTesterProps> = ({ apiUrl, apiKey }) => {
     if (defaultTemplates[selectedMethod]) {
       // Replace the model in the template with the default model
       let template = defaultTemplates[selectedMethod];
-      
+
       // Find and replace the model in the template if it exists
       const modelRegex = /"model":\s*"([^"]*)"/;
       if (modelRegex.test(template)) {
         template = template.replace(modelRegex, `"model": "${defaultModel}"`);
       }
-      
+
       // Format JSON for better readability
       try {
         const parsed = JSON.parse(template);
@@ -232,7 +235,7 @@ const ApiTester: React.FC<ApiTesterProps> = ({ apiUrl, apiKey }) => {
   return (
     <div className="max-w-4xl mx-auto p-6">
       <h1 className="text-3xl font-bold text-gray-800 mb-6">OpenAI Compatible API Tester</h1>
-      
+
       <div className="bg-white rounded-lg shadow-md p-6 mb-6">
         <h2 className="text-xl font-semibold text-gray-700 mb-4">Configuration</h2>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -331,7 +334,7 @@ const ApiTester: React.FC<ApiTesterProps> = ({ apiUrl, apiKey }) => {
               />
             )}
           </div>
-          
+
           <div className="mb-4">
             <label className="block text-xs font-medium text-gray-600 mb-1">Method Description</label>
             <div className="bg-blue-50 border border-blue-200 text-blue-700 px-4 py-3 rounded-md text-xs">
@@ -342,7 +345,7 @@ const ApiTester: React.FC<ApiTesterProps> = ({ apiUrl, apiKey }) => {
               )}
             </div>
           </div>
-          
+
           <div className="mb-4">
             <label className="block text-xs font-medium text-gray-600 mb-1">Request Parameters (JSON)</label>
             <textarea
@@ -352,7 +355,7 @@ const ApiTester: React.FC<ApiTesterProps> = ({ apiUrl, apiKey }) => {
               className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 h-48 text-xs"
             />
           </div>
-          
+
           <button
             type="submit"
             disabled={loading}
