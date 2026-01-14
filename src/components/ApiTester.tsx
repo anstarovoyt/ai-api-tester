@@ -194,7 +194,13 @@ const ApiTester: React.FC<ApiTesterProps> = ({ apiUrl, apiKey }) => {
         template = template.replace(modelRegex, `"model": "${defaultModel}"`);
       }
       
-      setParams(template);
+      // Format JSON for better readability
+      try {
+        const parsed = JSON.parse(template);
+        setParams(JSON.stringify(parsed, null, 2));
+      } catch (e) {
+        setParams(template);
+      }
     }
   }, [selectedMethod, defaultModel]);
 
@@ -303,8 +309,8 @@ const ApiTester: React.FC<ApiTesterProps> = ({ apiUrl, apiKey }) => {
           </div>
           
           <div className="mb-4">
-            <label className="block text-sm font-medium text-gray-600 mb-1">Method Description</label>
-            <div className="bg-blue-50 border border-blue-200 text-blue-700 px-4 py-3 rounded-md">
+            <label className="block text-xs font-medium text-gray-600 mb-1">Method Description</label>
+            <div className="bg-blue-50 border border-blue-200 text-blue-700 px-4 py-3 rounded-md text-xs">
               {methodDescriptions[selectedMethod] ? (
                 <div dangerouslySetInnerHTML={{ __html: methodDescriptions[selectedMethod] }} />
               ) : (
@@ -314,12 +320,12 @@ const ApiTester: React.FC<ApiTesterProps> = ({ apiUrl, apiKey }) => {
           </div>
           
           <div className="mb-4">
-            <label className="block text-sm font-medium text-gray-600 mb-1">Request Parameters (JSON)</label>
+            <label className="block text-xs font-medium text-gray-600 mb-1">Request Parameters (JSON)</label>
             <textarea
               value={params}
               onChange={(e) => setParams(e.target.value)}
               placeholder='{"model": "gpt-3.5-turbo", "messages": [{"role": "user", "content": "Hello"}]}'
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 h-32"
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 h-48 text-xs"
             />
           </div>
           
@@ -336,7 +342,7 @@ const ApiTester: React.FC<ApiTesterProps> = ({ apiUrl, apiKey }) => {
       {response && (
         <div className="bg-white rounded-lg shadow-md p-6">
           <h2 className="text-xl font-semibold text-gray-700 mb-4">Response</h2>
-          <pre className="bg-gray-100 p-4 rounded-md overflow-auto max-h-96">
+          <pre className="bg-gray-100 p-4 rounded-md overflow-auto max-h-96 text-xs">
             {response}
           </pre>
         </div>
