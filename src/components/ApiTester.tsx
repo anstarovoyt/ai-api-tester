@@ -26,19 +26,35 @@ const ApiTester: React.FC<ApiTesterProps> = ({ apiUrl, apiKey }) => {
     '/v1/audio/transcriptions': '{"model": "whisper-1", "file": "audio.mp3", "prompt": "Transcribe this audio"}',
     '/v1/audio/translations': '{"model": "whisper-1", "file": "audio.mp3", "prompt": "Translate this to English"}',
     '/v1/fine-tunes': '{"model": "gpt-3.5-turbo", "training_file": "file-id"}',
-    '/v1/models': ''
+    '/v1/models': '',
+    '/v1/images/edits': '{"model": "dall-e-2", "prompt": "A cute robot playing piano", "image": "image.png", "mask": "mask.png"}',
+    '/v1/images/variations': '{"model": "dall-e-2", "prompt": "A cute robot playing piano", "image": "image.png"}',
+    '/v1/audio/speech': '{"model": "tts-1", "input": "Hello world", "voice": "alloy"}',
+    '/v1/fine-tunes/abandon': '{"fine_tune_id": "ft-abc123"}',
+    '/v1/fine-tunes/list': '',
+    '/v1/models/delete': '{"model": "model-id"}',
+    '/v1/models/list': '',
+    '/v1/models/retrieve': '{"model": "model-id"}'
   };
 
   // Descriptions for each OpenAI method
   const methodDescriptions: Record<string, string> = {
     '/v1/chat/completions': 'Generates chat completions using a language model, supporting conversation-style interactions with multiple messages.<br><br>Request Parameters (JSON):<br><br><span class="font-semibold">model</span>: string (e.g. gpt-3.5-turbo) - The model to use for generation<br><span class="font-semibold">messages</span>: array of message objects - Array of message objects<br>&nbsp;&nbsp;<span class="font-semibold">role</span>: string (user, assistant, or system) - Role of the message sender<br>&nbsp;&nbsp;<span class="font-semibold">content</span>: string - Content of the message<br><span class="font-semibold">temperature</span>: number (0.0 to 2.0) - Controls randomness (0.0 = deterministic, 2.0 = maximum randomness)<br><span class="font-semibold">max_tokens</span>: integer - Maximum number of tokens to generate<br><span class="font-semibold">top_p</span>: number (0.0 to 1.0) - Controls diversity via nucleus sampling<br><span class="font-semibold">frequency_penalty</span>: number (-2.0 to 2.0) - Modifies probability of tokens based on frequency<br><span class="font-semibold">presence_penalty</span>: number (-2.0 to 2.0) - Modifies probability of tokens based on presence<br><span class="font-semibold">stream</span>: boolean - Whether to stream responses',
-    '/v1/completions': 'Generates text completions from a given prompt, supporting various text generation tasks.<br><br>Request Parameters (JSON):<br><br><span class="font-semibold">model</span>: string (e.g. gpt-3.5-turbo) - The model to use for generation<br><span class="font-semibold">prompt</span>: string - Text to complete<br><span class="font-semibold">temperature</span>: number (0.0 to 2.0) - Controls randomness (0.0 = deterministic, 2.0 = maximum randomness)<br><span class="font-semibold">max_tokens</span>: integer - Maximum number of tokens to generate<br><span class="font-semibold">top_p</span>: number (0.0 to 1.0) - Controls diversity via nucleus sampling<br><span class="font-semibold">frequency_penalty</span>: number (-2.0 to 2.0) - Modifies probability of tokens based on frequency<br><span class="font-semibold">presence_penalty</span>: number (-2.0 to 2.0) - Modifies probability of tokens based on presence<br><span class="font-semibold">stream</span>: boolean - Whether to stream responses',
+    '/v1/completions': 'Generates text completions from a given prompt, supporting various text generation tasks.<br><br>Request Parameters (JSON):<br><br><span class="font-semibold">model</span>: string (e.g. gpt-3.5-turbo) - The model to use for generation<br><span class="font-semibold">prompt</span>: string - Text to complete<br><span class="font-semibold">temperature</span>: number (0.0 to 2.0) - Controls randomness (0.0 = deterministic, 2.0 = maximum randomness)<br><span class="font-semibold">max_tokens</d> integer - Maximum number of tokens to generate<br><span class="font-semibold">top_p</span>: number (0.0 to 1.0) - Controls diversity via nucleus sampling<br><span class="font-semibold">frequency_penalty</span>: number (-2.0 to 2.0) - Modifies probability of tokens based on frequency<br><span class="font-semibold">presence_penalty</span>: number (-2.0 to 2.0) - Modifies probability of tokens based on presence<br><span class="font-semibold">stream</span>: boolean - Whether to stream responses',
     '/v1/embeddings': 'Generates embeddings for input text, converting text into numerical vectors that capture semantic meaning.<br><br>Request Parameters (JSON):<br><br><span class="font-semibold">model</span>: string (e.g. text-embedding-ada-002) - The model to use for generating embeddings<br><span class="font-semibold">input</span>: string - Text to generate embeddings for',
     '/v1/images/generations': 'Generates images from text prompts using image generation models like DALL-E.<br><br>Request Parameters (JSON):<br><br><span class="font-semibold">model</span>: string (e.g. dall-e-3) - The model to use for image generation<br><span class="font-semibold">prompt</span>: string - Text description of the image to generate<br><span class="font-semibold">n</span>: integer (1-10) - Number of images to generate<br><span class="font-semibold">size</span>: string (1024x1024, 1024x1792, or 1792x1024) - Dimensions of the generated image',
     '/v1/audio/transcriptions': 'Transcribes audio files into text using speech recognition models like Whisper.<br><br>Request Parameters (JSON):<br><br><span class="font-semibold">model</span>: string (e.g. whisper-1) - The model to use for transcription<br><span class="font-semibold">file</span>: string - Audio file to transcribe<br><span class="font-semibold">prompt</span>: string - Text to guide the transcription',
     '/v1/audio/translations': 'Translates audio files into text in a different language using speech recognition models like Whisper.<br><br>Request Parameters (JSON):<br><br><span class="font-semibold">model</span>: string (e.g. whisper-1) - The model to use for translation<br><span class="font-semibold">file</span>: string - Audio file to translate<br><span class="font-semibold">prompt</span>: string - Text to guide the translation',
     '/v1/fine-tunes': 'Creates fine-tuned versions of existing models for specific tasks by training on custom datasets.<br><br>Request Parameters (JSON):<br><br><span class="font-semibold">model</span>: string (e.g. gpt-3.5-turbo) - Base model to fine-tune<br><span class="font-semibold">training_file</span>: string - ID of the file containing training data',
-    '/v1/models': 'Retrieves a list of available models that can be used with the API.<br><br>No request parameters needed.'
+    '/v1/models': 'Retrieves a list of available models that can be used with the API.<br><br>No request parameters needed.',
+    '/v1/images/edits': 'Creates edited versions of images using image editing models.<br><br>Request Parameters (JSON):<br><br><span class="font-semibold">model</span>: string (e.g. dall-e-2) - The model to use for image editing<br><span class="font-semibold">prompt</span>: string - Text description of the edit to make<br><span class="font-semibold">image</span>: string - Path to the image file to edit<br><span class="font-semibold">mask</span>: string - Path to the mask file (optional)<br><span class="font-semibold">n</span>: integer (1-10) - Number of images to generate<br><span class="font-semibold">size</span>: string (1024x1024, 1024x1792, or 1792x1024) - Dimensions of the generated image',
+    '/v1/images/variations': 'Creates variations of images using image variation models.<br><br>Request Parameters (JSON):<br><br><span class="font-semibold">model</span>: string (e.g. dall-e-2) - The model to use for image variation<br><span class="font-semibold">prompt</span>: string - Text description of the variation to make<br><span class="font-semibold">image</span>: string - Path to the image file to vary<br><span class="font-semibold">n</span>: integer (1-10) - Number of images to generate<br><span class="font-semibold">size</span>: string (1024x1024, 1024x1792, or 1792x1024) - Dimensions of the generated image',
+    '/v1/audio/speech': 'Generates speech from text using text-to-speech models.<br><br>Request Parameters (JSON):<br><br><span class="font-semibold">model</span>: string (e.g. tts-1) - The model to use for speech generation<br><span class="font-semibold">input</span>: string - Text to convert to speech<br><span class="font-semibold">voice</span>: string (alloy, echo, fable, onyx, nova, or shimmer) - Voice to use for speech<br><span class="font-semibold">response_format</span>: string (mp3, opus, aac, or wav) - Format of the response audio<br><span class="font-semibold">speed</span>: number (0.25 to 4.0) - Speed of the speech (default 1.0)',
+    '/v1/fine-tunes/abandon': 'Aborts a fine-tuning job.<br><br>Request Parameters (JSON):<br><br><span class="font-semibold">fine_tune_id</span>: string - ID of the fine-tuning job to abandon',
+    '/v1/fine-tunes/list': 'Lists fine-tuning jobs.<br><br>No request parameters needed.',
+    '/v1/models/delete': 'Deletes a fine-tuned model.<br><br>Request Parameters (JSON):<br><br><span class="font-semibold">model</span>: string - ID of the model to delete',
+    '/v1/models/list': 'Lists all models available.<br><br>No request parameters needed.',
+    '/v1/models/retrieve': 'Retrieves information about a specific model.<br><br>Request Parameters (JSON):<br><br><span class="font-semibold">model</span>: string - ID of the model to retrieve'
   };
 
   const openaiMethods = [
@@ -49,7 +65,15 @@ const ApiTester: React.FC<ApiTesterProps> = ({ apiUrl, apiKey }) => {
      '/v1/audio/transcriptions',
      '/v1/audio/translations',
      '/v1/fine-tunes',
-     '/v1/models'
+     '/v1/models',
+     '/v1/images/edits',
+     '/v1/images/variations',
+     '/v1/audio/speech',
+     '/v1/fine-tunes/abandon',
+     '/v1/fine-tunes/list',
+     '/v1/models/delete',
+     '/v1/models/list',
+     '/v1/models/retrieve'
    ];
 
   const apiUrlOptions = [
@@ -276,7 +300,7 @@ const ApiTester: React.FC<ApiTesterProps> = ({ apiUrl, apiKey }) => {
         <h2 className="text-xl font-semibold text-gray-700 mb-4">Test Endpoint</h2>
         <form onSubmit={handleSubmit}>
           <div className="mb-4">
-            <label className="block text-sm font-medium text-gray-600 mb-1">OpenAI Method</label>
+            <label className="block text-xs font-medium text-gray-600 mb-1">OpenAI Method</label>
             <div className="flex items-center space-x-2">
               <select
                 value={selectedMethod}
