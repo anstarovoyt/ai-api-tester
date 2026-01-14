@@ -29,6 +29,18 @@ const ApiTester: React.FC<ApiTesterProps> = ({ apiUrl, apiKey }) => {
     '/v1/models': ''
   };
 
+  // Descriptions for each OpenAI method
+  const methodDescriptions: Record<string, string> = {
+    '/v1/chat/completions': 'Generates chat completions using a language model, supporting conversation-style interactions with multiple messages.',
+    '/v1/completions': 'Generates text completions from a given prompt, supporting various text generation tasks.',
+    '/v1/embeddings': 'Generates embeddings for input text, converting text into numerical vectors that capture semantic meaning.',
+    '/v1/images/generations': 'Generates images from text prompts using image generation models like DALL-E.',
+    '/v1/audio/transcriptions': 'Transcribes audio files into text using speech recognition models like Whisper.',
+    '/v1/audio/translations': 'Translates audio files into text in a different language using speech recognition models like Whisper.',
+    '/v1/fine-tunes': 'Creates fine-tuned versions of existing models for specific tasks by training on custom datasets.',
+    '/v1/models': 'Retrieves a list of available models that can be used with the API.'
+  };
+
   const openaiMethods = [
      '/v1/chat/completions',
      '/v1/completions',
@@ -289,6 +301,13 @@ const ApiTester: React.FC<ApiTesterProps> = ({ apiUrl, apiKey }) => {
                 placeholder="Enter custom method path"
               />
             )}
+          </div>
+          
+          <div className="mb-4">
+            <label className="block text-sm font-medium text-gray-600 mb-1">Method Description</label>
+            <div className="bg-blue-50 border border-blue-200 text-blue-700 px-4 py-3 rounded-md">
+              {methodDescriptions[selectedMethod] || 'No description available for this method.'}
+            </div>
           </div>
           
           <div className="mb-4">
