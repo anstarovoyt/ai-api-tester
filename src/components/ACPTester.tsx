@@ -30,7 +30,7 @@ const methodConfigs: Record<string, MethodConfig> = {
     "channel": "web"
   }
 }`,
-    description: 'Creates a new ACP session with the selected agent.'
+    description: 'Creates a new ACP session with the selected agent. Use this to establish the initial handshake and attach any client context you want the agent to see for the lifetime of the session. The response typically includes the session identifier used by follow-up calls.<br><br><span class="font-semibold">client_id</span>: string - Unique identifier for the client<br><span class="font-semibold">metadata</span>: object - Optional metadata for tracing or routing<br>&nbsp;&nbsp;<span class="font-semibold">channel</span>: string - Client channel (e.g. web, cli)<br><span class="font-semibold">capabilities</span>: object - Optional client capability hints'
   },
   'session/send': {
     template: `{
@@ -40,17 +40,17 @@ const methodConfigs: Record<string, MethodConfig> = {
     "content": "Hello from the client"
   }
 }`,
-    description: 'Sends a message to the agent in a session.'
+    description: 'Sends a message to the agent within an existing session. Use this for back-and-forth conversation, tool triggers, or system-level instructions. Streaming responses may be supported by the agent depending on implementation.<br><br><span class="font-semibold">session_id</span>: string - Active session identifier<br><span class="font-semibold">message</span>: object - Message payload<br>&nbsp;&nbsp;<span class="font-semibold">role</span>: string - user | system | assistant<br>&nbsp;&nbsp;<span class="font-semibold">content</span>: string - Message content<br>&nbsp;&nbsp;<span class="font-semibold">metadata</span>: object - Optional message metadata<br><span class="font-semibold">stream</span>: boolean - Whether to stream responses'
   },
   'session/end': {
     template: `{
   "session_id": "session-id"
 }`,
-    description: 'Ends an ACP session.'
+    description: 'Ends an ACP session and releases any server-side state associated with it. Call this when a conversation is complete or the client is shutting down. Some agents may return a final summary or cleanup status.<br><br><span class="font-semibold">session_id</span>: string - Session identifier to close<br><span class="font-semibold">reason</span>: string - Optional reason for termination'
   },
   'tools/list': {
     template: '{}',
-    description: 'Lists tools available for the current agent.'
+    description: 'Lists tools available for the current agent along with optional metadata. Use this to discover what actions the agent can perform before sending calls. Some agents can include parameter schemas to prefill request payloads.<br><br><span class="font-semibold">include_schemas</span>: boolean - Include input schema details if supported'
   },
   'tools/call': {
     template: `{
@@ -59,11 +59,11 @@ const methodConfigs: Record<string, MethodConfig> = {
     "customer_id": "cust_123"
   }
 }`,
-    description: 'Calls a tool with arguments.'
+    description: 'Calls a tool exposed by the agent. This is the primary way to trigger external actions or structured capabilities. The response payload shape depends on the tool definition.<br><br><span class="font-semibold">tool</span>: string - Tool identifier<br><span class="font-semibold">arguments</span>: object - Tool arguments payload<br><span class="font-semibold">trace_id</span>: string - Optional tracing identifier'
   },
   'ping': {
     template: '{}',
-    description: 'Checks the ACP agent connectivity.'
+    description: 'Checks ACP agent connectivity and measures basic responsiveness. Use this to verify the agent process is running before starting a session. No parameters are required.<br><br>No parameters required.'
   }
 };
 
@@ -95,6 +95,10 @@ const ACPTester: React.FC<ACPTesterProps> = ({ apiUrl, apiKey }) => {
   const [agents, setAgents] = useState<AgentOption[]>([]);
   const [selectedAgent, setSelectedAgent] = useState('');
   const [agentReady, setAgentReady] = useState(false);
+  const [sessionId, setSessionId] = useState('');
+  const [sessionRole, setSessionRole] = useState('user');
+  const [sessionContent, setSessionContent] = useState('');
+  const [sessionInitParams, setSessionInitParams] = useState(`{\n  \"client_id\": \"web-client\",\n  \"metadata\": {\n    \"channel\": \"web\"\n  }\n}`);
 
   const apiUrlChoices = useMemo(() => (
     apiUrlOptions.includes(apiUrlValue)
@@ -231,29 +235,13 @@ const ACPTester: React.FC<ACPTesterProps> = ({ apiUrl, apiKey }) => {
     }
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const sendAcpRequest = async (method: string, paramsPayload: object) => {
     setLoading(true);
-
-    let requestBody = {};
-    if (params) {
-      try {
-        requestBody = JSON.parse(params);
-      } catch (parseError) {
-        addLocalLog({
-          direction: 'error',
-          payload: `Invalid JSON in parameters: ${parseError instanceof Error ? parseError.message : 'Unknown error'}`
-        });
-        setLoading(false);
-        return;
-      }
-    }
-
     const payload = {
       jsonrpc: '2.0',
       id: requestId,
-      method: selectedMethod,
-      params: requestBody
+      method,
+      params: paramsPayload
     };
     setRequestId((prev) => prev + 1);
 
@@ -279,16 +267,44 @@ const ACPTester: React.FC<ACPTesterProps> = ({ apiUrl, apiKey }) => {
         if (text) {
           addLocalLog({ direction: 'incoming', payload: text });
         }
+        return null;
+      }
+      if (method === 'session/init') {
+        const sessionFromResult = data.result?.session_id || data.result?.sessionId || data.session_id || data.sessionId;
+        if (sessionFromResult) {
+          setSessionId(sessionFromResult);
+        }
       }
       fetchLogs();
+      return data;
     } catch (err) {
       addLocalLog({
         direction: 'error',
         payload: err instanceof Error ? err.message : 'Unknown ACP error'
       });
+      return null;
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+
+    let requestBody = {};
+    if (params) {
+      try {
+        requestBody = JSON.parse(params);
+      } catch (parseError) {
+        addLocalLog({
+          direction: 'error',
+          payload: `Invalid JSON in parameters: ${parseError instanceof Error ? parseError.message : 'Unknown error'}`
+        });
+        return;
+      }
+    }
+
+    await sendAcpRequest(selectedMethod, requestBody);
   };
 
   const currentDescription = methodConfigs[selectedMethod]?.description;
@@ -381,7 +397,7 @@ const ACPTester: React.FC<ACPTesterProps> = ({ apiUrl, apiKey }) => {
       </div>
 
       <div className="bg-white rounded-lg shadow-md p-6 mb-6">
-        <h2 className="text-xl font-semibold text-gray-700 mb-4">Test Endpoint</h2>
+        <h2 className="text-xl font-semibold text-gray-700 mb-4">Stage 2: Requests</h2>
         <form onSubmit={handleSubmit}>
           <div className="mb-4">
             <label className="block text-xs font-medium text-gray-600 mb-1">ACP Method</label>
@@ -414,7 +430,11 @@ const ACPTester: React.FC<ACPTesterProps> = ({ apiUrl, apiKey }) => {
           <div className="mb-4">
             <label className="block text-xs font-medium text-gray-600 mb-1">Method Description</label>
             <div className="bg-blue-50 border border-blue-200 text-blue-700 px-4 py-3 rounded-md text-xs">
-              {currentDescription || 'No description available for this method.'}
+              {currentDescription ? (
+                <div dangerouslySetInnerHTML={{ __html: currentDescription }} />
+              ) : (
+                'No description available for this method.'
+              )}
             </div>
           </div>
 
@@ -436,6 +456,124 @@ const ACPTester: React.FC<ACPTesterProps> = ({ apiUrl, apiKey }) => {
             {loading ? 'Sending...' : 'Send Request'}
           </button>
         </form>
+      </div>
+
+      <div className="bg-white rounded-lg shadow-md p-6 mb-6">
+        <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+          <div>
+            <h2 className="text-xl font-semibold text-gray-700">Stage 3: Session</h2>
+            <p className="text-sm text-gray-500 mt-1">
+              Initialize a session and send session-bound messages.
+            </p>
+          </div>
+          <div className="text-xs text-gray-500">
+            {sessionId ? `Active session: ${sessionId}` : 'No session selected'}
+          </div>
+        </div>
+        <div className="mt-4 grid grid-cols-1 lg:grid-cols-[1.1fr_1fr] gap-4">
+          <div className="border border-gray-200 rounded-lg p-4">
+            <h3 className="text-sm font-semibold text-gray-700">Initialize Session</h3>
+            <p className="text-xs text-gray-500 mt-1">
+              Provide session init parameters. The returned session ID will be filled automatically.
+            </p>
+            <label className="block text-xs font-medium text-gray-600 mt-3 mb-1">Init Parameters (JSON)</label>
+            <textarea
+              value={sessionInitParams}
+              onChange={(e) => setSessionInitParams(e.target.value)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 h-32 text-xs"
+              placeholder='{"client_id":"web-client"}'
+            />
+            <button
+              type="button"
+              onClick={() => {
+                try {
+                  const parsed = sessionInitParams ? JSON.parse(sessionInitParams) : {};
+                  sendAcpRequest('session/init', parsed);
+                } catch (err) {
+                  addLocalLog({
+                    direction: 'error',
+                    payload: `Invalid JSON in session init: ${err instanceof Error ? err.message : 'Unknown error'}`
+                  });
+                }
+              }}
+              disabled={loading || !selectedAgent}
+              className={`mt-3 inline-flex items-center px-3 py-1.5 text-sm bg-emerald-600 text-white rounded-md hover:bg-emerald-700 focus:outline-none focus:ring-2 focus:ring-emerald-500 ${
+                loading || !selectedAgent ? 'opacity-50 cursor-not-allowed' : ''
+              }`}
+            >
+              Initialize Session
+            </button>
+          </div>
+          <div className="border border-gray-200 rounded-lg p-4">
+            <h3 className="text-sm font-semibold text-gray-700">Send Message</h3>
+            <label className="block text-xs font-medium text-gray-600 mt-3 mb-1">Session ID</label>
+            <input
+              type="text"
+              value={sessionId}
+              onChange={(e) => setSessionId(e.target.value)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              placeholder="session-id"
+            />
+            <label className="block text-xs font-medium text-gray-600 mt-3 mb-1">Role</label>
+            <PrettySelect
+              value={sessionRole}
+              onChange={setSessionRole}
+              options={[
+                { value: 'user', label: 'user' },
+                { value: 'system', label: 'system' },
+                { value: 'assistant', label: 'assistant' }
+              ]}
+              className="w-full"
+            />
+            <label className="block text-xs font-medium text-gray-600 mt-3 mb-1">Message</label>
+            <textarea
+              value={sessionContent}
+              onChange={(e) => setSessionContent(e.target.value)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 h-24 text-xs"
+              placeholder="Send a message to the agent..."
+            />
+            <div className="mt-3 flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  if (!sessionId) {
+                    addLocalLog({ direction: 'error', payload: 'Set a session_id before sending a message.' });
+                    return;
+                  }
+                  sendAcpRequest('session/send', {
+                    session_id: sessionId,
+                    message: {
+                      role: sessionRole,
+                      content: sessionContent
+                    }
+                  });
+                }}
+                disabled={loading || !sessionId}
+                className={`inline-flex items-center px-3 py-1.5 text-sm bg-blue-600 text-white rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+                  loading || !sessionId ? 'opacity-50 cursor-not-allowed' : ''
+                }`}
+              >
+                Send Message
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  if (!sessionId) {
+                    addLocalLog({ direction: 'error', payload: 'Set a session_id before ending the session.' });
+                    return;
+                  }
+                  sendAcpRequest('session/end', { session_id: sessionId });
+                }}
+                disabled={loading || !sessionId}
+                className={`inline-flex items-center px-3 py-1.5 text-sm bg-gray-200 text-gray-700 rounded-md hover:bg-gray-300 focus:outline-none focus:ring-2 focus:ring-gray-500 ${
+                  loading || !sessionId ? 'opacity-50 cursor-not-allowed' : ''
+                }`}
+              >
+                End Session
+              </button>
+            </div>
+          </div>
+        </div>
       </div>
 
       <div className="bg-white rounded-lg shadow-md p-6 mb-6">
