@@ -1,8 +1,11 @@
-const fs = require("fs");
-const path = require("path");
-const { spawn } = require("child_process");
 const readline = require("readline");
-const express = require("express");
+const { MCPRuntime } = require("./mcp-runtime");
+
+const args = process.argv.slice(2);
+const configFlagIndex = args.findIndex((arg) => arg === "--config" || arg === "-c");
+const configPath = configFlagIndex >= 0 && args[configFlagIndex + 1]
+  ? args[configFlagIndex + 1]
+  : "mcp-stdio.json";
 
 const colors = {
   reset: "\x1b[0m",
@@ -18,131 +21,8 @@ const colors = {
 const colorize = (color, text) => `${colors[color] || ""}${text}${colors.reset}`;
 const formatBanner = (label) => colorize("bold", colorize("cyan", label));
 
-const args = process.argv.slice(2);
-const configFlagIndex = args.findIndex((arg) => arg === "--config" || arg === "-c");
-const configPath = configFlagIndex >= 0 && args[configFlagIndex + 1]
-  ? args[configFlagIndex + 1]
-  : "mcp-stdio.json";
-
-const resolvedConfigPath = path.isAbsolute(configPath)
-  ? configPath
-  : path.join(process.cwd(), configPath);
-
-if (!fs.existsSync(resolvedConfigPath)) {
-  console.error(colorize("red", `Config not found: ${resolvedConfigPath}`));
-  process.exit(1);
-}
-
-let config;
-try {
-  config = JSON.parse(fs.readFileSync(resolvedConfigPath, "utf8"));
-} catch (err) {
-  console.error(colorize("red", `Failed to parse config JSON: ${err instanceof Error ? err.message : err}`));
-  process.exit(1);
-}
-
-if (!config || config.type !== "stdio" || !config.command) {
-  console.error(colorize("red", "Invalid config. Expected { type: 'stdio', command: string, args?: string[], env?: object }"));
-  process.exit(1);
-}
-
-const child = spawn(config.command, config.args || [], {
-  env: { ...process.env, ...(config.env || {}) },
-  stdio: ["pipe", "pipe", "pipe"]
-});
-
-const pendingRequests = new Map();
-const logEntries = [];
-let logCounter = 1;
-
-const pushLog = (entry) => {
-  const item = {
-    id: logCounter++,
-    timestamp: new Date().toISOString(),
-    ...entry
-  };
-  logEntries.push(item);
-  if (logEntries.length > 500) {
-    logEntries.shift();
-  }
-};
-
-child.on("exit", (code) => {
-  console.log(colorize("yellow", `\nMCP process exited with code ${code ?? "unknown"}`));
-  process.exit(code ?? 0);
-});
-
-child.on("error", (err) => {
-  console.error(colorize("red", `Failed to start MCP process: ${err instanceof Error ? err.message : err}`));
-});
-
-let stdoutBuffer = "";
-let lastMessageKey = null;
-let lastMessageCount = 0;
-let lastMessageInputCounter = 0;
-let lastRepeatPrintedAt = 0;
-let userInputCounter = 0;
-
-const handleLine = (line) => {
-  const trimmed = line.trim();
-  if (!trimmed) {
-    return;
-  }
-  const now = Date.now();
-  if (trimmed === lastMessageKey && lastMessageInputCounter === userInputCounter) {
-    lastMessageCount += 1;
-    if (lastMessageCount === 2 || now - lastRepeatPrintedAt > 2000) {
-      console.log(colorize("dim", `-> repeated x${lastMessageCount}`));
-      lastRepeatPrintedAt = now;
-    }
-    rl.prompt();
-    return;
-  }
-
-  lastMessageKey = trimmed;
-  lastMessageCount = 1;
-  lastMessageInputCounter = userInputCounter;
-  lastRepeatPrintedAt = 0;
-
-  try {
-    const parsed = JSON.parse(trimmed);
-    if (parsed && typeof parsed === "object") {
-      if (parsed.id !== undefined && pendingRequests.has(parsed.id)) {
-        pendingRequests.get(parsed.id)(parsed);
-        pendingRequests.delete(parsed.id);
-      }
-      if (parsed.method && !("id" in parsed)) {
-        pushLog({ direction: "notification", payload: parsed });
-      } else {
-        pushLog({ direction: "incoming", payload: parsed });
-      }
-    }
-    console.log(`\n${formatBanner("< RESPONSE")}\n${colorize("green", JSON.stringify(parsed, null, 2))}`);
-  } catch {
-    pushLog({ direction: "raw", payload: trimmed });
-    console.log(`\n${formatBanner("< RESPONSE")}\n${colorize("green", trimmed)}`);
-  }
-  rl.prompt();
-};
-
-child.stdout.on("data", (chunk) => {
-  stdoutBuffer += chunk.toString("utf8");
-  let index;
-  while ((index = stdoutBuffer.indexOf("\n")) >= 0) {
-    const line = stdoutBuffer.slice(0, index);
-    stdoutBuffer = stdoutBuffer.slice(index + 1);
-    handleLine(line);
-  }
-});
-
-child.stderr.on("data", (chunk) => {
-  const message = chunk.toString("utf8");
-  if (message.trim()) {
-    pushLog({ direction: "error", payload: message.trim() });
-    console.error(`\n${colorize("red", "[stderr]")} ${message.trim()}`);
-    rl.prompt();
-  }
-});
+const runtime = new MCPRuntime(configPath);
+runtime.start();
 
 const rl = readline.createInterface({
   input: process.stdin,
@@ -151,29 +31,48 @@ const rl = readline.createInterface({
 });
 
 let requestId = 1;
+let lastMessageKey = null;
+let lastMessageCount = 0;
+let lastMessageInputCounter = 0;
+let lastRepeatPrintedAt = 0;
+let userInputCounter = 0;
 
-const sendRequest = (method, params) => {
-  const payload = {
-    jsonrpc: "2.0",
-    id: requestId++,
-    method,
-    params
-  };
-  pushLog({ direction: "outgoing", payload });
-  child.stdin.write(`${JSON.stringify(payload)}\n`);
-  console.log(`\n${formatBanner("> REQUEST")}\n${colorize("cyan", JSON.stringify(payload, null, 2))}`);
+const printResponse = (payload) => {
+  const text = typeof payload === "string" ? payload : JSON.stringify(payload, null, 2);
+  console.log(`\n${formatBanner("< RESPONSE")}\n${colorize("green", text)}`);
 };
 
-const sendNotification = (method, params) => {
-  const payload = {
-    jsonrpc: "2.0",
-    method,
-    params
-  };
-  pushLog({ direction: "outgoing", payload });
-  child.stdin.write(`${JSON.stringify(payload)}\n`);
-  console.log(`\n${formatBanner("> NOTIFY")}\n${colorize("magenta", JSON.stringify(payload, null, 2))}`);
-};
+runtime.on("log", (entry) => {
+  if (entry.direction === "outgoing") {
+    return;
+  }
+  const payloadText = typeof entry.payload === "string"
+    ? entry.payload
+    : JSON.stringify(entry.payload);
+  if (payloadText === lastMessageKey && lastMessageInputCounter === userInputCounter) {
+    lastMessageCount += 1;
+    const now = Date.now();
+    if (lastMessageCount === 2 || now - lastRepeatPrintedAt > 2000) {
+      console.log(colorize("dim", `-> repeated x${lastMessageCount}`));
+      lastRepeatPrintedAt = now;
+    }
+    rl.prompt();
+    return;
+  }
+  lastMessageKey = payloadText;
+  lastMessageCount = 1;
+  lastMessageInputCounter = userInputCounter;
+  lastRepeatPrintedAt = 0;
+
+  if (entry.direction === "error") {
+    console.error(`\n${colorize("red", "[stderr]")} ${entry.payload}`);
+    rl.prompt();
+    return;
+  }
+
+  printResponse(entry.payload);
+  rl.prompt();
+});
 
 const parseParams = (jsonText) => {
   if (!jsonText || !jsonText.trim()) {
@@ -185,6 +84,29 @@ const parseParams = (jsonText) => {
     console.error(colorize("red", `Invalid JSON: ${err instanceof Error ? err.message : err}`));
     return null;
   }
+};
+
+const sendRequest = (method, params) => {
+  const payload = {
+    jsonrpc: "2.0",
+    id: requestId++,
+    method,
+    params
+  };
+  console.log(`\n${formatBanner("> REQUEST")}\n${colorize("cyan", JSON.stringify(payload, null, 2))}`);
+  runtime.sendRequest(payload).catch((err) => {
+    console.error(colorize("red", `Request failed: ${err instanceof Error ? err.message : err}`));
+  });
+};
+
+const sendNotification = (method, params) => {
+  const payload = {
+    jsonrpc: "2.0",
+    method,
+    params
+  };
+  console.log(`\n${formatBanner("> NOTIFY")}\n${colorize("magenta", JSON.stringify(payload, null, 2))}`);
+  runtime.sendNotification(payload);
 };
 
 const parseCommand = (line) => {
@@ -230,7 +152,7 @@ const printHelp = () => {
 `);
 };
 
-console.log(`${colorize("green", "MCP CLI started")} ${colorize("dim", resolvedConfigPath)}`);
+console.log(`${colorize("green", "MCP CLI started")} ${colorize("dim", configPath)}`);
 printHelp();
 rl.prompt();
 
@@ -243,7 +165,7 @@ rl.on("line", (line) => {
   }
   if (trimmed === "exit" || trimmed === "quit") {
     rl.close();
-    child.kill();
+    runtime.stop();
     return;
   }
   if (trimmed === "help") {
@@ -274,71 +196,5 @@ rl.on("line", (line) => {
 
 rl.on("close", () => {
   console.log("\nClosing MCP CLI...");
-  child.kill();
-});
-
-const app = express();
-app.use(express.json({ limit: "2mb" }));
-app.use((req, res, next) => {
-  res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "*");
-  res.setHeader("Access-Control-Allow-Headers", "*");
-  if (req.method === "OPTIONS") {
-    res.sendStatus(204);
-    return;
-  }
-  next();
-});
-
-app.post("/mcp", async (req, res) => {
-  const payload = req.body;
-  if (!payload || typeof payload !== "object") {
-    res.status(400).json({ error: { message: "Invalid JSON-RPC payload" } });
-    return;
-  }
-
-  const isNotification = payload.id === undefined || payload.id === null;
-  const outgoing = {
-    jsonrpc: payload.jsonrpc || "2.0",
-    method: payload.method,
-    params: payload.params ?? {}
-  };
-  if (!isNotification) {
-    outgoing.id = payload.id;
-  }
-
-  if (!outgoing.method) {
-    res.status(400).json({ error: { message: "Missing method in JSON-RPC payload" } });
-    return;
-  }
-
-  pushLog({ direction: "outgoing", payload: outgoing });
-  child.stdin.write(`${JSON.stringify(outgoing)}\n`);
-
-  if (isNotification) {
-    res.json({ ok: true });
-    return;
-  }
-
-  const response = await new Promise((resolve) => {
-    const timeout = setTimeout(() => {
-      pendingRequests.delete(outgoing.id);
-      resolve({ error: { message: "Response timeout" } });
-    }, 30_000);
-    pendingRequests.set(outgoing.id, (data) => {
-      clearTimeout(timeout);
-      resolve(data);
-    });
-  });
-
-  res.json(response);
-});
-
-app.get("/mcp/logs", (req, res) => {
-  res.json({ items: logEntries });
-});
-
-const webPort = process.env.MCP_CLI_PORT || 3001;
-app.listen(webPort, () => {
-  console.log(colorize("green", `MCP web server running on http://localhost:${webPort}`));
+  runtime.stop();
 });
