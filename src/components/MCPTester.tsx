@@ -1,67 +1,58 @@
-import React, { useEffect, useState } from 'react';
+import React, { useMemo, useState } from 'react';
 
 interface MCPTesterProps {
   apiUrl: string;
   apiKey: string;
 }
 
-interface MethodConfig {
-  template: string;
-  description: string;
+interface Tool {
+  name: string;
+  title?: string;
+  description?: string;
+  inputSchema?: object;
 }
 
-const methodConfigs: Record<string, MethodConfig> = {
-  'initialize': {
-    template: `{
-  "protocolVersion": "2024-11-05",
-  "capabilities": {
-    "tools": {},
-    "resources": {},
-    "prompts": {}
+interface Resource {
+  uri: string;
+  name: string;
+  description?: string;
+  mimeType?: string;
+}
+
+interface Prompt {
+  name: string;
+  description?: string;
+  arguments?: Array<{ name: string; description?: string; required?: boolean }>;
+}
+
+const apiUrlOptions = [
+  'http://localhost:3001',
+  'http://localhost:4000'
+];
+
+const defaultInitParams = {
+  protocolVersion: '2024-11-05',
+  capabilities: {
+    tools: {},
+    resources: {},
+    prompts: {}
   },
-  "clientInfo": {
-    "name": "api-tester",
-    "version": "1.0.0"
+  clientInfo: {
+    name: 'api-tester',
+    version: '1.0.0'
   }
-}`,
-    description: 'Establishes connection with the MCP server and negotiates capabilities. This must be called first before any other operations.'
-  },
-  'tools/list': {
-    template: '{}',
-    description: 'Discovers all available tools on the MCP server. Tools are functions that can be called to perform actions.'
-  },
-  'tools/call': {
-    template: `{
-  "name": "tool_name",
-  "arguments": {}
-}`,
-    description: 'Executes a specific tool with the provided arguments.<br><br><span class="font-semibold">name</span>: string - Tool name<br><span class="font-semibold">arguments</span>: object - Tool arguments'
-  },
-  'resources/list': {
-    template: '{}',
-    description: 'Lists all available resources on the server. Resources are data sources that can be read.'
-  },
-  'resources/read': {
-    template: `{
-  "uri": "file:///path/to/resource"
-}`,
-    description: 'Retrieves the content of a specific resource by its URI.<br><br><span class="font-semibold">uri</span>: string - Resource identifier'
-  },
-  'prompts/list': {
-    template: '{}',
-    description: 'Lists all available prompt templates on the server.'
-  },
-  'prompts/get': {
-    template: `{
-  "name": "prompt_name",
-  "arguments": {}
-}`,
-    description: 'Retrieves a specific prompt template with the provided arguments.<br><br><span class="font-semibold">name</span>: string - Prompt name<br><span class="font-semibold">arguments</span>: object - Prompt arguments'
-  },
-  'ping': {
-    template: '{}',
-    description: 'Simple ping to check if the server is responsive.'
-  }
+};
+
+const methodDescriptions: Record<string, string> = {
+  'initialize': 'Establishes connection with the MCP server and negotiates capabilities. This must be called first before any other operations.',
+  'tools/list': 'Discovers all available tools on the MCP server.',
+  'tools/call': 'Executes a specific tool with the provided arguments.',
+  'resources/list': 'Lists all available resources on the server.',
+  'resources/read': 'Retrieves the content of a specific resource by its URI.',
+  'prompts/list': 'Lists all available prompt templates on the server.',
+  'prompts/get': 'Retrieves a specific prompt template with the provided arguments.',
+  'ping': 'Simple ping to check if the server is responsive.',
+  'notifications/initialized': 'Notification that client initialization is complete.'
 };
 
 const mcpMethods = [
@@ -75,73 +66,103 @@ const mcpMethods = [
   { value: 'ping', label: 'Ping', category: 'Utility' }
 ];
 
-const apiUrlOptions = [
-  'http://localhost:3001',
-  'http://localhost:4000'
-];
-
 const MCPTester: React.FC<MCPTesterProps> = ({ apiUrl, apiKey }) => {
-  const [params, setParams] = useState('');
   const [response, setResponse] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [apiUrlValue, setApiUrlValue] = useState(apiUrl);
   const [apiKeyValue, setApiKeyValue] = useState(apiKey);
-  const [selectedMethod, setSelectedMethod] = useState('initialize');
-  const [showMethodInput, setShowMethodInput] = useState(false);
   const [showUrlInput, setShowUrlInput] = useState(false);
   const [requestId, setRequestId] = useState(1);
+  const [isInitialized, setIsInitialized] = useState(false);
+  const [serverName, setServerName] = useState<string | null>(null);
+  const [serverVersion, setServerVersion] = useState<string | null>(null);
+  const [availableTools, setAvailableTools] = useState<Tool[]>([]);
+  const [availableResources, setAvailableResources] = useState<Resource[]>([]);
+  const [availablePrompts, setAvailablePrompts] = useState<Prompt[]>([]);
+  const [toolName, setToolName] = useState('');
+  const [toolArguments, setToolArguments] = useState('{}');
+  const [resourceUri, setResourceUri] = useState('');
+  const [promptName, setPromptName] = useState('');
+  const [promptArguments, setPromptArguments] = useState('{}');
+  const [advancedMethod, setAdvancedMethod] = useState('initialize');
+  const [advancedParams, setAdvancedParams] = useState(JSON.stringify(defaultInitParams, null, 2));
+  const [showMethodInput, setShowMethodInput] = useState(false);
 
-  useEffect(() => {
-    const config = methodConfigs[selectedMethod];
-    if (config) {
-      try {
-        const parsed = JSON.parse(config.template);
-        setParams(JSON.stringify(parsed, null, 2));
-      } catch {
-        setParams(config.template);
-      }
-    } else {
-      setParams('{}');
+  const apiUrlChoices = useMemo(() => (
+    apiUrlOptions.includes(apiUrlValue)
+      ? apiUrlOptions
+      : [...apiUrlOptions, apiUrlValue]
+  ), [apiUrlValue]);
+
+  const parseJson = (value: string, label: string) => {
+    if (!value.trim()) {
+      return {};
     }
-  }, [selectedMethod]);
+    try {
+      return JSON.parse(value);
+    } catch (parseError) {
+      const errorMsg = `Invalid JSON in ${label}: ${parseError instanceof Error ? parseError.message : 'Unknown error'}`;
+      setError(errorMsg);
+      return null;
+    }
+  };
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const buildHeaders = () => {
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json'
+    };
+    if (apiKeyValue.trim()) {
+      headers.Authorization = `Bearer ${apiKeyValue.trim()}`;
+    }
+    return headers;
+  };
+
+  const handleResponse = (method: string, data: any) => {
+    if (data?.result) {
+      if (method === 'initialize') {
+        setIsInitialized(true);
+        setServerName(data.result.serverInfo?.name || null);
+        setServerVersion(data.result.serverInfo?.version || null);
+      }
+      if (method === 'tools/list' && data.result.tools) {
+        setAvailableTools(data.result.tools);
+        if (!toolName && data.result.tools.length > 0) {
+          setToolName(data.result.tools[0].name);
+        }
+      }
+      if (method === 'resources/list' && data.result.resources) {
+        setAvailableResources(data.result.resources);
+        if (!resourceUri && data.result.resources.length > 0) {
+          setResourceUri(data.result.resources[0].uri);
+        }
+      }
+      if (method === 'prompts/list' && data.result.prompts) {
+        setAvailablePrompts(data.result.prompts);
+        if (!promptName && data.result.prompts.length > 0) {
+          setPromptName(data.result.prompts[0].name);
+        }
+      }
+    }
+  };
+
+  const sendMcpRequest = async (method: string, params: object) => {
     setLoading(true);
     setError(null);
     setResponse(null);
 
     try {
-      let parsedParams = {};
-      if (params.trim()) {
-        try {
-          parsedParams = JSON.parse(params);
-        } catch (parseError) {
-          const errorMsg = `Invalid JSON in parameters: ${parseError instanceof Error ? parseError.message : 'Unknown error'}`;
-          setError(errorMsg);
-          return;
-        }
-      }
-
       const requestBody = {
         jsonrpc: '2.0',
         id: requestId,
-        method: selectedMethod,
-        params: parsedParams
+        method,
+        params
       };
       setRequestId((prev) => prev + 1);
 
-      const headers: Record<string, string> = {
-        'Content-Type': 'application/json'
-      };
-      if (apiKeyValue.trim()) {
-        headers.Authorization = `Bearer ${apiKeyValue.trim()}`;
-      }
-
       const res = await fetch(apiUrlValue, {
         method: 'POST',
-        headers,
+        headers: buildHeaders(),
         body: JSON.stringify(requestBody)
       });
 
@@ -157,6 +178,7 @@ const MCPTester: React.FC<MCPTesterProps> = ({ apiUrl, apiKey }) => {
       const data = await res.json().catch(() => null);
       if (data) {
         setResponse(JSON.stringify(data, null, 2));
+        handleResponse(method, data);
       } else {
         const text = await res.text();
         setResponse(text || 'Empty response');
@@ -180,11 +202,58 @@ const MCPTester: React.FC<MCPTesterProps> = ({ apiUrl, apiKey }) => {
     }
   };
 
-  const currentDescription = methodConfigs[selectedMethod]?.description;
+  const sendNotification = async (method: string) => {
+    setLoading(true);
+    setError(null);
+    setResponse(null);
 
-  const apiUrlChoices = apiUrlOptions.includes(apiUrlValue)
-    ? apiUrlOptions
-    : [...apiUrlOptions, apiUrlValue];
+    try {
+      const requestBody = {
+        jsonrpc: '2.0',
+        method
+      };
+
+      const res = await fetch(apiUrlValue, {
+        method: 'POST',
+        headers: buildHeaders(),
+        body: JSON.stringify(requestBody)
+      });
+
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}));
+        const errorMessage = errorData.error?.message ||
+          errorData.message ||
+          `HTTP Error: ${res.status} - ${res.statusText}`;
+        setError(`API Error: ${errorMessage}`);
+        return;
+      }
+
+      const data = await res.json().catch(() => null);
+      if (data) {
+        setResponse(JSON.stringify(data, null, 2));
+      } else {
+        const text = await res.text();
+        setResponse(text || 'Notification sent');
+      }
+    } catch (err) {
+      if (err instanceof Error) {
+        setError(`Request Error: ${err.message}`);
+      } else {
+        setError('An unknown error occurred');
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleAdvancedSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const parsed = parseJson(advancedParams, 'advanced parameters');
+    if (parsed === null) {
+      return;
+    }
+    sendMcpRequest(advancedMethod, parsed);
+  };
 
   return (
     <div>
@@ -238,14 +307,232 @@ const MCPTester: React.FC<MCPTesterProps> = ({ apiUrl, apiKey }) => {
       </div>
 
       <div className="bg-white rounded-lg shadow-md p-6 mb-6">
-        <h2 className="text-xl font-semibold text-gray-700 mb-4">Test Endpoint</h2>
-        <form onSubmit={handleSubmit}>
+        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+          <div>
+            <h2 className="text-xl font-semibold text-gray-700">Stage 1: Initialize</h2>
+            <p className="text-sm text-gray-500 mt-1">
+              {methodDescriptions.initialize}
+            </p>
+          </div>
+          <div className="flex items-center gap-3">
+            <span className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-medium ${
+              isInitialized ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-600'
+            }`}>
+              <span className={`w-2 h-2 rounded-full mr-2 ${isInitialized ? 'bg-green-500' : 'bg-gray-400'}`}></span>
+              {isInitialized ? 'Connected' : 'Not Connected'}
+            </span>
+            {serverName && (
+              <span className="text-sm text-gray-500">
+                {serverName}{serverVersion ? ` v${serverVersion}` : ''}
+              </span>
+            )}
+          </div>
+        </div>
+        <div className="mt-4 flex flex-wrap gap-3">
+          <button
+            type="button"
+            onClick={() => sendMcpRequest('initialize', defaultInitParams)}
+            disabled={loading}
+            className={`px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 ${loading ? 'opacity-50 cursor-not-allowed' : ''}`}
+          >
+            Initialize
+          </button>
+          <button
+            type="button"
+            onClick={() => sendNotification('notifications/initialized')}
+            disabled={loading}
+            className={`px-4 py-2 bg-gray-200 text-gray-700 rounded-md hover:bg-gray-300 focus:outline-none focus:ring-2 focus:ring-gray-500 ${loading ? 'opacity-50 cursor-not-allowed' : ''}`}
+          >
+            Send Initialized Notification
+          </button>
+        </div>
+      </div>
+
+      <div className="bg-white rounded-lg shadow-md p-6 mb-6">
+        <h2 className="text-xl font-semibold text-gray-700">Stage 2: Discover</h2>
+        <p className="text-sm text-gray-500 mt-1">
+          Fetch the server catalog so you can pick tools, resources, and prompts.
+        </p>
+        <div className="mt-4 flex flex-wrap gap-3">
+          <button
+            type="button"
+            onClick={() => sendMcpRequest('tools/list', {})}
+            disabled={loading}
+            className={`px-4 py-2 bg-emerald-600 text-white rounded-md hover:bg-emerald-700 focus:outline-none focus:ring-2 focus:ring-emerald-500 ${loading ? 'opacity-50 cursor-not-allowed' : ''}`}
+          >
+            List Tools ({availableTools.length})
+          </button>
+          <button
+            type="button"
+            onClick={() => sendMcpRequest('resources/list', {})}
+            disabled={loading}
+            className={`px-4 py-2 bg-amber-500 text-white rounded-md hover:bg-amber-600 focus:outline-none focus:ring-2 focus:ring-amber-400 ${loading ? 'opacity-50 cursor-not-allowed' : ''}`}
+          >
+            List Resources ({availableResources.length})
+          </button>
+          <button
+            type="button"
+            onClick={() => sendMcpRequest('prompts/list', {})}
+            disabled={loading}
+            className={`px-4 py-2 bg-purple-600 text-white rounded-md hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-purple-500 ${loading ? 'opacity-50 cursor-not-allowed' : ''}`}
+          >
+            List Prompts ({availablePrompts.length})
+          </button>
+          <button
+            type="button"
+            onClick={() => sendMcpRequest('ping', {})}
+            disabled={loading}
+            className={`px-4 py-2 bg-gray-200 text-gray-700 rounded-md hover:bg-gray-300 focus:outline-none focus:ring-2 focus:ring-gray-500 ${loading ? 'opacity-50 cursor-not-allowed' : ''}`}
+          >
+            Ping
+          </button>
+        </div>
+      </div>
+
+      <div className="bg-white rounded-lg shadow-md p-6 mb-6">
+        <h2 className="text-xl font-semibold text-gray-700">Stage 3: Use Capabilities</h2>
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mt-4">
+          <div className="border border-gray-200 rounded-lg p-4">
+            <h3 className="text-lg font-semibold text-gray-700">Tools</h3>
+            <p className="text-xs text-gray-500 mt-1">{methodDescriptions['tools/call']}</p>
+            <label className="block text-xs font-medium text-gray-600 mt-4 mb-1">Tool</label>
+            {availableTools.length > 0 ? (
+              <select
+                value={toolName}
+                onChange={(e) => setToolName(e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                {availableTools.map((tool) => (
+                  <option key={tool.name} value={tool.name}>
+                    {tool.title || tool.name}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <input
+                type="text"
+                value={toolName}
+                onChange={(e) => setToolName(e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                placeholder="tool_name"
+              />
+            )}
+            <label className="block text-xs font-medium text-gray-600 mt-3 mb-1">Tool Arguments (JSON)</label>
+            <textarea
+              value={toolArguments}
+              onChange={(e) => setToolArguments(e.target.value)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 h-28 text-xs"
+              placeholder="{}"
+            />
+            <button
+              type="button"
+              onClick={() => {
+                const parsed = parseJson(toolArguments, 'tool arguments');
+                if (parsed === null) return;
+                sendMcpRequest('tools/call', { name: toolName || 'tool_name', arguments: parsed });
+              }}
+              disabled={loading}
+              className={`mt-3 w-full px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 ${loading ? 'opacity-50 cursor-not-allowed' : ''}`}
+            >
+              Call Tool
+            </button>
+          </div>
+
+          <div className="border border-gray-200 rounded-lg p-4">
+            <h3 className="text-lg font-semibold text-gray-700">Resources</h3>
+            <p className="text-xs text-gray-500 mt-1">{methodDescriptions['resources/read']}</p>
+            <label className="block text-xs font-medium text-gray-600 mt-4 mb-1">Resource URI</label>
+            {availableResources.length > 0 ? (
+              <select
+                value={resourceUri}
+                onChange={(e) => setResourceUri(e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                {availableResources.map((resource) => (
+                  <option key={resource.uri} value={resource.uri}>
+                    {resource.name} ({resource.uri})
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <input
+                type="text"
+                value={resourceUri}
+                onChange={(e) => setResourceUri(e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                placeholder="file:///path/to/resource"
+              />
+            )}
+            <button
+              type="button"
+              onClick={() => sendMcpRequest('resources/read', { uri: resourceUri || 'file:///path/to/resource' })}
+              disabled={loading}
+              className={`mt-6 w-full px-4 py-2 bg-amber-500 text-white rounded-md hover:bg-amber-600 focus:outline-none focus:ring-2 focus:ring-amber-400 ${loading ? 'opacity-50 cursor-not-allowed' : ''}`}
+            >
+              Read Resource
+            </button>
+          </div>
+
+          <div className="border border-gray-200 rounded-lg p-4">
+            <h3 className="text-lg font-semibold text-gray-700">Prompts</h3>
+            <p className="text-xs text-gray-500 mt-1">{methodDescriptions['prompts/get']}</p>
+            <label className="block text-xs font-medium text-gray-600 mt-4 mb-1">Prompt</label>
+            {availablePrompts.length > 0 ? (
+              <select
+                value={promptName}
+                onChange={(e) => setPromptName(e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                {availablePrompts.map((prompt) => (
+                  <option key={prompt.name} value={prompt.name}>
+                    {prompt.name}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <input
+                type="text"
+                value={promptName}
+                onChange={(e) => setPromptName(e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                placeholder="prompt_name"
+              />
+            )}
+            <label className="block text-xs font-medium text-gray-600 mt-3 mb-1">Prompt Arguments (JSON)</label>
+            <textarea
+              value={promptArguments}
+              onChange={(e) => setPromptArguments(e.target.value)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 h-28 text-xs"
+              placeholder="{}"
+            />
+            <button
+              type="button"
+              onClick={() => {
+                const parsed = parseJson(promptArguments, 'prompt arguments');
+                if (parsed === null) return;
+                sendMcpRequest('prompts/get', { name: promptName || 'prompt_name', arguments: parsed });
+              }}
+              disabled={loading}
+              className={`mt-3 w-full px-4 py-2 bg-purple-600 text-white rounded-md hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-purple-500 ${loading ? 'opacity-50 cursor-not-allowed' : ''}`}
+            >
+              Get Prompt
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <details className="bg-white rounded-lg shadow-md p-6 mb-6">
+        <summary className="text-lg font-semibold text-gray-700 cursor-pointer">Advanced JSON-RPC</summary>
+        <p className="text-sm text-gray-500 mt-2">
+          Use this section for custom methods or raw JSON-RPC requests.
+        </p>
+        <form onSubmit={handleAdvancedSubmit} className="mt-4">
           <div className="mb-4">
             <label className="block text-xs font-medium text-gray-600 mb-1">MCP Method</label>
             <div className="flex items-center space-x-2">
               <select
-                value={selectedMethod}
-                onChange={(e) => setSelectedMethod(e.target.value)}
+                value={advancedMethod}
+                onChange={(e) => setAdvancedMethod(e.target.value)}
                 className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
               >
                 {Object.entries(
@@ -275,8 +562,8 @@ const MCPTester: React.FC<MCPTesterProps> = ({ apiUrl, apiKey }) => {
             {showMethodInput && (
               <input
                 type="text"
-                value={selectedMethod}
-                onChange={(e) => setSelectedMethod(e.target.value)}
+                value={advancedMethod}
+                onChange={(e) => setAdvancedMethod(e.target.value)}
                 className="w-full mt-2 px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
                 placeholder="Enter custom method path"
               />
@@ -286,21 +573,17 @@ const MCPTester: React.FC<MCPTesterProps> = ({ apiUrl, apiKey }) => {
           <div className="mb-4">
             <label className="block text-xs font-medium text-gray-600 mb-1">Method Description</label>
             <div className="bg-blue-50 border border-blue-200 text-blue-700 px-4 py-3 rounded-md text-xs">
-              {currentDescription ? (
-                <div dangerouslySetInnerHTML={{ __html: currentDescription }} />
-              ) : (
-                'No description available for this method.'
-              )}
+              {methodDescriptions[advancedMethod] || 'No description available for this method.'}
             </div>
           </div>
 
           <div className="mb-4">
             <label className="block text-xs font-medium text-gray-600 mb-1">Request Parameters (JSON)</label>
             <textarea
-              value={params}
-              onChange={(e) => setParams(e.target.value)}
+              value={advancedParams}
+              onChange={(e) => setAdvancedParams(e.target.value)}
               placeholder="{}"
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 h-48 text-xs"
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 h-40 text-xs"
             />
           </div>
 
@@ -312,7 +595,7 @@ const MCPTester: React.FC<MCPTesterProps> = ({ apiUrl, apiKey }) => {
             {loading ? 'Sending...' : 'Send Request'}
           </button>
         </form>
-      </div>
+      </details>
 
       {response && (
         <div className="bg-white rounded-lg shadow-md p-6">
