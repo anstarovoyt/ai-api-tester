@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import PrettySelect from './PrettySelect';
 
 interface ACPTesterProps {
   apiUrl: string;
@@ -215,17 +216,12 @@ const ACPTester: React.FC<ACPTesterProps> = ({ apiUrl, apiKey }) => {
           <div>
             <label className="block text-sm font-medium text-gray-600 mb-1">ACP Server URL</label>
             <div className="flex items-center space-x-2">
-              <select
+              <PrettySelect
                 value={apiUrlValue}
-                onChange={(e) => setApiUrlValue(e.target.value)}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-              >
-                {apiUrlChoices.map((url) => (
-                  <option key={url} value={url}>
-                    {url}
-                  </option>
-                ))}
-              </select>
+                onChange={setApiUrlValue}
+                options={apiUrlChoices.map((url) => ({ value: url, label: url }))}
+                className="w-full"
+              />
               <button
                 type="button"
                 onClick={() => setShowUrlInput(!showUrlInput)}
@@ -262,17 +258,12 @@ const ACPTester: React.FC<ACPTesterProps> = ({ apiUrl, apiKey }) => {
           <div className="mb-4">
             <label className="block text-xs font-medium text-gray-600 mb-1">ACP Method</label>
             <div className="flex items-center space-x-2">
-              <select
+              <PrettySelect
                 value={selectedMethod}
-                onChange={(e) => setSelectedMethod(e.target.value)}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-              >
-                {acpMethods.map((method) => (
-                  <option key={method.value} value={method.value}>
-                    {method.label}
-                  </option>
-                ))}
-              </select>
+                onChange={setSelectedMethod}
+                options={acpMethods.map((method) => ({ value: method.value, label: method.label }))}
+                className="w-full"
+              />
               <button
                 type="button"
                 onClick={() => setShowMethodInput(!showMethodInput)}
@@ -294,15 +285,16 @@ const ACPTester: React.FC<ACPTesterProps> = ({ apiUrl, apiKey }) => {
 
           <div className="mb-4">
             <label className="block text-xs font-medium text-gray-600 mb-1">HTTP Method</label>
-            <select
+            <PrettySelect
               value={httpMethod}
-              onChange={(e) => setHttpMethod(e.target.value as HttpMethod)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-            >
-              <option value="GET">GET</option>
-              <option value="POST">POST</option>
-              <option value="DELETE">DELETE</option>
-            </select>
+              onChange={(value) => setHttpMethod(value as HttpMethod)}
+              options={[
+                { value: 'GET', label: 'GET' },
+                { value: 'POST', label: 'POST' },
+                { value: 'DELETE', label: 'DELETE' }
+              ]}
+              className="w-full"
+            />
           </div>
 
           <div className="mb-4">

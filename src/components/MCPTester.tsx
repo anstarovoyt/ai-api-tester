@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import PrettySelect from './PrettySelect';
 
 interface MCPTesterProps {
   apiUrl: string;
@@ -374,17 +375,12 @@ const MCPTester: React.FC<MCPTesterProps> = ({ apiUrl, apiKey }) => {
           <div>
             <label className="block text-sm font-medium text-gray-600 mb-1">MCP Server URL</label>
             <div className="flex items-center space-x-2">
-              <select
+              <PrettySelect
                 value={apiUrlValue}
-                onChange={(e) => setApiUrlValue(e.target.value)}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-              >
-                {apiUrlChoices.map((url) => (
-                  <option key={url} value={url}>
-                    {url}
-                  </option>
-                ))}
-              </select>
+                onChange={setApiUrlValue}
+                options={apiUrlChoices.map((url) => ({ value: url, label: url }))}
+                className="w-full"
+              />
               <button
                 type="button"
                 onClick={() => setShowUrlInput(!showUrlInput)}
@@ -527,23 +523,21 @@ const MCPTester: React.FC<MCPTesterProps> = ({ apiUrl, apiKey }) => {
             <p className="text-xs text-gray-500 mt-1">{methodDescriptions['tools/call']}</p>
             <label className="block text-xs font-medium text-gray-600 mt-4 mb-1">Tool</label>
             {availableTools.length > 0 ? (
-              <select
+              <PrettySelect
                 value={toolName}
-                onChange={(e) => setToolName(e.target.value)}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-              >
-                {availableTools.map((tool) => (
-                  <option key={tool.name} value={tool.name}>
-                    {tool.title || tool.name}
-                  </option>
-                ))}
-              </select>
+                onChange={setToolName}
+                options={availableTools.map((tool) => ({
+                  value: tool.name,
+                  label: tool.title || tool.name
+                }))}
+                className="w-full"
+              />
             ) : (
               <input
                 type="text"
                 value={toolName}
                 onChange={(e) => setToolName(e.target.value)}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="w-full pretty-select"
                 placeholder="tool_name"
               />
             )}
@@ -630,23 +624,21 @@ const MCPTester: React.FC<MCPTesterProps> = ({ apiUrl, apiKey }) => {
             <p className="text-xs text-gray-500 mt-1">{methodDescriptions['resources/read']}</p>
             <label className="block text-xs font-medium text-gray-600 mt-4 mb-1">Resource URI</label>
             {availableResources.length > 0 ? (
-              <select
+              <PrettySelect
                 value={resourceUri}
-                onChange={(e) => setResourceUri(e.target.value)}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-              >
-                {availableResources.map((resource) => (
-                  <option key={resource.uri} value={resource.uri}>
-                    {resource.name} ({resource.uri})
-                  </option>
-                ))}
-              </select>
+                onChange={setResourceUri}
+                options={availableResources.map((resource) => ({
+                  value: resource.uri,
+                  label: `${resource.name} (${resource.uri})`
+                }))}
+                className="w-full"
+              />
             ) : (
               <input
                 type="text"
                 value={resourceUri}
                 onChange={(e) => setResourceUri(e.target.value)}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="w-full pretty-select"
                 placeholder="file:///path/to/resource"
               />
             )}
@@ -687,17 +679,15 @@ const MCPTester: React.FC<MCPTesterProps> = ({ apiUrl, apiKey }) => {
             <p className="text-xs text-gray-500 mt-1">{methodDescriptions['prompts/get']}</p>
             <label className="block text-xs font-medium text-gray-600 mt-4 mb-1">Prompt</label>
             {availablePrompts.length > 0 ? (
-              <select
+              <PrettySelect
                 value={promptName}
-                onChange={(e) => setPromptName(e.target.value)}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-              >
-                {availablePrompts.map((prompt) => (
-                  <option key={prompt.name} value={prompt.name}>
-                    {prompt.name}
-                  </option>
-                ))}
-              </select>
+                onChange={setPromptName}
+                options={availablePrompts.map((prompt) => ({
+                  value: prompt.name,
+                  label: prompt.name
+                }))}
+                className="w-full"
+              />
             ) : (
               <input
                 type="text"
@@ -757,27 +747,16 @@ const MCPTester: React.FC<MCPTesterProps> = ({ apiUrl, apiKey }) => {
           <div className="mb-4">
             <label className="block text-xs font-medium text-gray-600 mb-1">MCP Method</label>
             <div className="flex items-center space-x-2">
-              <select
+              <PrettySelect
                 value={advancedMethod}
-                onChange={(e) => setAdvancedMethod(e.target.value)}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-              >
-                {Object.entries(
-                  mcpMethods.reduce((acc, method) => {
-                    if (!acc[method.category]) acc[method.category] = [];
-                    acc[method.category].push(method);
-                    return acc;
-                  }, {} as Record<string, typeof mcpMethods>)
-                ).map(([category, methods]) => (
-                  <optgroup key={category} label={category}>
-                    {methods.map((method) => (
-                      <option key={method.value} value={method.value}>
-                        {method.label}
-                      </option>
-                    ))}
-                  </optgroup>
-                ))}
-              </select>
+                onChange={setAdvancedMethod}
+                options={mcpMethods.map((method) => ({
+                  value: method.value,
+                  label: method.label,
+                  group: method.category
+                }))}
+                className="w-full"
+              />
               <button
                 type="button"
                 onClick={() => setShowMethodInput(!showMethodInput)}

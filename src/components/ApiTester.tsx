@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import PrettySelect from './PrettySelect';
 
 interface ApiTesterProps {
   apiUrl: string;
@@ -248,17 +249,12 @@ const ApiTester: React.FC<ApiTesterProps> = ({ apiUrl, apiKey }) => {
           <div>
             <label className="block text-sm font-medium text-gray-600 mb-1">API URL</label>
             <div className="flex items-center space-x-2">
-              <select
+              <PrettySelect
                 value={apiUrlValue}
-                onChange={(e) => setApiUrlValue(e.target.value)}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-              >
-                {apiUrlChoices.map((url) => (
-                  <option key={url} value={url}>
-                    {url}
-                  </option>
-                ))}
-              </select>
+                onChange={setApiUrlValue}
+                options={apiUrlChoices.map((url) => ({ value: url, label: url }))}
+                className="w-full"
+              />
               <button
                 type="button"
                 onClick={() => setShowUrlInput(!showUrlInput)}
@@ -311,17 +307,12 @@ const ApiTester: React.FC<ApiTesterProps> = ({ apiUrl, apiKey }) => {
           <div className="mb-4">
             <label className="block text-xs font-medium text-gray-600 mb-1">OpenAI Method</label>
             <div className="flex items-center space-x-2">
-              <select
+              <PrettySelect
                 value={selectedMethod}
-                onChange={(e) => setSelectedMethod(e.target.value)}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-              >
-                {openaiMethods.map((method) => (
-                  <option key={method} value={method}>
-                    {method}
-                  </option>
-                ))}
-              </select>
+                onChange={setSelectedMethod}
+                options={openaiMethods.map((method) => ({ value: method, label: method }))}
+                className="w-full"
+              />
               <button
                 type="button"
                 onClick={() => setShowMethodInput(!showMethodInput)}
