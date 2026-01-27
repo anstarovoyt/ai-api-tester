@@ -13,6 +13,10 @@ interface LogEntry {
   payload: any;
 }
 
+interface AgentOption {
+  name: string;
+}
+
 interface MethodConfig {
   template: string;
   description: string;
@@ -166,10 +170,17 @@ const ACPRemoteTester: React.FC<ACPRemoteTesterProps> = ({ apiUrl, apiKey }) => 
   const [availableModes, setAvailableModes] = useState<ModeOption[]>([]);
   const [selectedModeId, setSelectedModeId] = useState('');
   const [pendingPrompts, setPendingPrompts] = useState<Set<number>>(new Set());
-  const [remoteGitInfo, setRemoteGitInfo] = useState({ url: '', branch: '', revision: '' });
+  const [remoteGitInfo, setRemoteGitInfo] = useState({
+    url: 'git@github.com:user/repo.git',
+    branch: 'main',
+    revision: 'abc123def456...'
+  });
   const [remoteMetaEnabled, setRemoteMetaEnabled] = useState(true);
   const [remoteTarget, setRemoteTarget] = useState<RemoteTarget | null>(null);
   const [connectionStatus, setConnectionStatus] = useState<'disconnected' | 'connecting' | 'connected' | 'error'>('disconnected');
+  const [agents, setAgents] = useState<AgentOption[]>([]);
+  const [selectedAgent, setSelectedAgent] = useState('');
+  const [agentsLoading, setAgentsLoading] = useState(false);
 
   const wsRef = useRef<WebSocket | null>(null);
   const pendingRequestsRef = useRef<Map<number | string, (payload: any) => void>>(new Map());
@@ -321,7 +332,7 @@ const ACPRemoteTester: React.FC<ACPRemoteTesterProps> = ({ apiUrl, apiKey }) => 
     return messages;
   }, [logEntries]);
 
-  const resolveWsUrl = (baseUrl: string, token: string) => {
+  const resolveWsUrl = (baseUrl: string, token: string, agent: string) => {
     let urlValue = baseUrl.trim();
     if (!urlValue) {
       return '';
@@ -337,12 +348,97 @@ const ACPRemoteTester: React.FC<ACPRemoteTesterProps> = ({ apiUrl, apiKey }) => 
       if (!parsed.pathname || parsed.pathname === '/') {
         parsed.pathname = '/acp';
       }
-      if (token.trim()) {
-        parsed.searchParams.set('token', token.trim());
+      const trimmedToken = token.trim();
+      if (trimmedToken) {
+        parsed.searchParams.set('token', trimmedToken);
+      } else {
+        parsed.searchParams.delete('token');
+      }
+      const trimmedAgent = agent.trim();
+      if (trimmedAgent) {
+        parsed.searchParams.set('agent', trimmedAgent);
+      } else {
+        parsed.searchParams.delete('agent');
       }
       return parsed.toString();
     } catch {
       return urlValue;
+    }
+  };
+
+  const resolveAgentsEndpoint = (baseUrl: string) => {
+    let urlValue = baseUrl.trim();
+    if (!urlValue) {
+      return '';
+    }
+    if (urlValue.startsWith('ws://')) {
+      urlValue = `http://${urlValue.slice(5)}`;
+    }
+    if (urlValue.startsWith('wss://')) {
+      urlValue = `https://${urlValue.slice(6)}`;
+    }
+    try {
+      const parsed = new URL(urlValue);
+      parsed.search = '';
+      parsed.hash = '';
+      const trimmed = parsed.toString().replace(/\/+$/, '');
+      if (trimmed.endsWith('/acp/agents')) {
+        return trimmed;
+      }
+      if (trimmed.endsWith('/acp')) {
+        return `${trimmed}/agents`;
+      }
+      return `${trimmed}/acp/agents`;
+    } catch {
+      const trimmed = urlValue.replace(/\/+$/, '');
+      if (trimmed.endsWith('/acp/agents')) {
+        return trimmed;
+      }
+      if (trimmed.endsWith('/acp')) {
+        return `${trimmed}/agents`;
+      }
+      return `${trimmed}/acp/agents`;
+    }
+  };
+
+  const fetchAgents = async () => {
+    const endpoint = resolveAgentsEndpoint(apiUrlValue);
+    if (!endpoint) {
+      addLocalLog({ direction: 'error', payload: 'Missing agent list endpoint.' });
+      return;
+    }
+    setAgentsLoading(true);
+    addLocalLog({ direction: 'notification', payload: `Loading agents from ${endpoint}` });
+    try {
+      const headers: Record<string, string> = {};
+      if (apiKeyValue.trim()) {
+        headers.Authorization = `Bearer ${apiKeyValue.trim()}`;
+      }
+      const res = await fetch(endpoint, { headers });
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}));
+        const errorMessage = errorData.error?.message || `HTTP ${res.status}`;
+        addLocalLog({ direction: 'error', payload: `Failed to load agents: ${errorMessage}` });
+        return;
+      }
+      const data = await res.json().catch(() => ({}));
+      if (!Array.isArray(data.agents)) {
+        addLocalLog({ direction: 'error', payload: 'Agent list response is missing agents array.' });
+        return;
+      }
+      setAgents(data.agents);
+      setSelectedAgent((prev) => {
+        if (prev && data.agents.some((agent: AgentOption) => agent.name === prev)) {
+          return prev;
+        }
+        const preferred = data.agents.find((agent: AgentOption) => agent.name === 'OpenCode');
+        return preferred?.name || data.agents[0]?.name || '';
+      });
+      addLocalLog({ direction: 'notification', payload: `Loaded ${data.agents.length} agents.` });
+    } catch {
+      addLocalLog({ direction: 'error', payload: 'Failed to load agents.' });
+    } finally {
+      setAgentsLoading(false);
     }
   };
 
@@ -358,7 +454,7 @@ const ACPRemoteTester: React.FC<ACPRemoteTesterProps> = ({ apiUrl, apiKey }) => 
     if (connectionStatus === 'connecting' || connectionStatus === 'connected') {
       return;
     }
-    const url = resolveWsUrl(apiUrlValue, apiKeyValue);
+    const url = resolveWsUrl(apiUrlValue, apiKeyValue, selectedAgent);
     if (!url) {
       addLocalLog({ direction: 'error', payload: 'Missing WebSocket URL.' });
       return;
@@ -467,6 +563,10 @@ const ACPRemoteTester: React.FC<ACPRemoteTesterProps> = ({ apiUrl, apiKey }) => 
       disconnectWs();
     };
   }, []);
+
+  useEffect(() => {
+    void fetchAgents();
+  }, [apiUrlValue, apiKeyValue]);
 
   useEffect(() => {
     const config = methodConfigs[selectedMethod];
@@ -858,6 +958,46 @@ const ACPRemoteTester: React.FC<ACPRemoteTesterProps> = ({ apiUrl, apiKey }) => 
           >
             {connectionStatus === 'connected' ? 'Disconnect' : 'Connect'}
           </button>
+        </div>
+      </div>
+
+      <div className="bg-white rounded-lg shadow-md p-6 mb-6">
+        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+          <div>
+            <h2 className="text-xl font-semibold text-gray-700">Agent Selection</h2>
+            <p className="text-sm text-gray-500 mt-1">
+              Loaded from <span className="font-mono">~/.jetbrains/acp.json</span> (<span className="font-mono">agent_servers</span>). Selection is sent as <span className="font-mono">?agent=</span>; reconnect to apply.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={fetchAgents}
+            disabled={agentsLoading}
+            className={`px-3 py-2 bg-gray-200 text-gray-700 rounded-md hover:bg-gray-300 focus:outline-none focus:ring-2 focus:ring-gray-500 ${
+              agentsLoading ? 'opacity-50 cursor-not-allowed' : ''
+            }`}
+          >
+            {agentsLoading ? 'Loading...' : 'Reload'}
+          </button>
+        </div>
+        <div className="mt-4">
+          <PrettySelect
+            value={selectedAgent}
+            onChange={(value) => {
+              setSelectedAgent(value);
+              if (connectionStatus === 'connected') {
+                addLocalLog({ direction: 'notification', payload: 'Agent selection updated. Reconnect to apply.' });
+              }
+            }}
+            options={agents.map((agent) => ({ value: agent.name, label: agent.name }))}
+            placeholder="Select agent to proxy"
+            className="w-full"
+          />
+          {agents.length === 0 && (
+            <p className="mt-2 text-xs text-gray-500">
+              No agents found. Check your <span className="font-mono">agent_servers</span> config.
+            </p>
+          )}
         </div>
       </div>
 
