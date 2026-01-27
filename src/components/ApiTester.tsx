@@ -86,6 +86,9 @@ const ApiTester: React.FC<ApiTesterProps> = ({ apiUrl, apiKey }) => {
     'https://api.cohere.ai',
     'https://api.groq.com'
   ];
+  const apiUrlChoices = apiUrlOptions.includes(apiUrlValue)
+    ? apiUrlOptions
+    : [...apiUrlOptions, apiUrlValue];
 
   const handleSubmit = async (e: React.FormEvent) => {
     console.log('=== API TESTER DEBUG START ===');
@@ -247,7 +250,7 @@ const ApiTester: React.FC<ApiTesterProps> = ({ apiUrl, apiKey }) => {
                 onChange={(e) => setApiUrlValue(e.target.value)}
                 className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
               >
-                {apiUrlOptions.map((url) => (
+                {apiUrlChoices.map((url) => (
                   <option key={url} value={url}>
                     {url}
                   </option>
