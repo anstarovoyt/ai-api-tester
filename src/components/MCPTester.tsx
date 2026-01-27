@@ -127,7 +127,11 @@ const MCPTester: React.FC<MCPTesterProps> = ({ apiUrl, apiKey }) => {
       }
       const data = await res.json();
       if (Array.isArray(data.items)) {
-        setLogEntries(data.items);
+        setLogEntries((prev) => {
+          const merged = new Map(prev.map((entry) => [entry.id, entry]));
+          data.items.forEach((entry: LogEntry) => merged.set(entry.id, entry));
+          return Array.from(merged.values()).sort((a, b) => a.id - b.id);
+        });
       }
     } catch {
       // Ignore log fetch errors to avoid noisy UI.

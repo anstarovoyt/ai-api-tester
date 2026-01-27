@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import PrettySelect from './PrettySelect';
 
 interface ACPTesterProps {
@@ -6,107 +6,168 @@ interface ACPTesterProps {
   apiKey: string;
 }
 
-type HttpMethod = 'GET' | 'POST' | 'DELETE';
+interface LogEntry {
+  id: number;
+  timestamp: string;
+  direction: 'outgoing' | 'incoming' | 'notification' | 'raw' | 'error';
+  payload: any;
+}
+
+interface AgentOption {
+  name: string;
+}
 
 interface MethodConfig {
-  method: HttpMethod;
   template: string;
   description: string;
 }
 
 const methodConfigs: Record<string, MethodConfig> = {
-  '/acp/health': {
-    method: 'GET',
-    template: '',
-    description: 'Basic health check for the ACP server. Returns status and version info when available.'
+  'session/init': {
+    template: `{
+  "client_id": "web-client",
+  "metadata": {
+    "channel": "web"
+  }
+}`,
+    description: 'Creates a new ACP session with the selected agent.'
   },
-  '/acp/agents': {
-    method: 'GET',
-    template: '',
-    description: 'Lists registered agents that can be targeted by ACP sessions.'
+  'session/send': {
+    template: `{
+  "session_id": "session-id",
+  "message": {
+    "role": "user",
+    "content": "Hello from the client"
+  }
+}`,
+    description: 'Sends a message to the agent in a session.'
   },
-  '/acp/agents/register': {
-    method: 'POST',
-    template: '{"agent_id": "agent-1", "display_name": "Support Agent", "capabilities": ["chat", "tools"]}',
-    description: 'Registers a new agent with the ACP server.<br><br><span class="font-semibold">agent_id</span>: string - Unique agent identifier<br><span class="font-semibold">display_name</span>: string - Human-friendly name<br><span class="font-semibold">capabilities</span>: string[] - Supported capabilities'
+  'session/end': {
+    template: `{
+  "session_id": "session-id"
+}`,
+    description: 'Ends an ACP session.'
   },
-  '/acp/sessions': {
-    method: 'POST',
-    template: '{"agent_id": "agent-1", "client_id": "client-1", "metadata": {"channel": "web"}}',
-    description: 'Creates a new ACP session between a client and an agent.<br><br><span class="font-semibold">agent_id</span>: string - Target agent identifier<br><span class="font-semibold">client_id</span>: string - Client identifier<br><span class="font-semibold">metadata</span>: object - Optional session metadata'
+  'tools/list': {
+    template: '{}',
+    description: 'Lists tools available for the current agent.'
   },
-  '/acp/sessions/list': {
-    method: 'GET',
-    template: '',
-    description: 'Lists active sessions for the configured ACP server.'
+  'tools/call': {
+    template: `{
+  "tool": "lookup_customer",
+  "arguments": {
+    "customer_id": "cust_123"
+  }
+}`,
+    description: 'Calls a tool with arguments.'
   },
-  '/acp/sessions/session-id': {
-    method: 'GET',
-    template: '',
-    description: 'Retrieves a single session. Replace <span class="font-semibold">session-id</span> with a real session identifier.'
-  },
-  '/acp/sessions/session-id/delete': {
-    method: 'DELETE',
-    template: '',
-    description: 'Ends a session. Replace <span class="font-semibold">session-id</span> with a real session identifier.'
-  },
-  '/acp/sessions/session-id/messages': {
-    method: 'POST',
-    template: '{"role": "user", "content": "Hello from the client", "stream": false}',
-    description: 'Sends a message to the agent in the specified session.<br><br><span class="font-semibold">role</span>: string - sender role (user, system, assistant)<br><span class="font-semibold">content</span>: string - message content<br><span class="font-semibold">stream</span>: boolean - request streaming responses'
-  },
-  '/acp/sessions/session-id/events': {
-    method: 'GET',
-    template: '',
-    description: 'Streams session events (often via SSE). Replace <span class="font-semibold">session-id</span> with a real session identifier.'
-  },
-  '/acp/tools': {
-    method: 'GET',
-    template: '',
-    description: 'Lists tools that can be invoked by the client or agent.'
-  },
-  '/acp/tools/call': {
-    method: 'POST',
-    template: '{"tool": "lookup_customer", "arguments": {"customer_id": "cust_123"}}',
-    description: 'Invokes a tool with arguments.<br><br><span class="font-semibold">tool</span>: string - Tool name<br><span class="font-semibold">arguments</span>: object - Tool arguments'
+  'ping': {
+    template: '{}',
+    description: 'Checks the ACP agent connectivity.'
   }
 };
 
 const acpMethods = [
-  { value: '/acp/health', label: 'Health Check' },
-  { value: '/acp/agents', label: 'List Agents' },
-  { value: '/acp/agents/register', label: 'Register Agent' },
-  { value: '/acp/sessions', label: 'Create Session' },
-  { value: '/acp/sessions/list', label: 'List Sessions' },
-  { value: '/acp/sessions/session-id', label: 'Get Session' },
-  { value: '/acp/sessions/session-id/delete', label: 'End Session' },
-  { value: '/acp/sessions/session-id/messages', label: 'Send Message' },
-  { value: '/acp/sessions/session-id/events', label: 'Stream Events' },
-  { value: '/acp/tools', label: 'List Tools' },
-  { value: '/acp/tools/call', label: 'Call Tool' }
+  { value: 'session/init', label: 'Initialize Session' },
+  { value: 'session/send', label: 'Send Message' },
+  { value: 'session/end', label: 'End Session' },
+  { value: 'tools/list', label: 'List Tools' },
+  { value: 'tools/call', label: 'Call Tool' },
+  { value: 'ping', label: 'Ping' }
 ];
 
 const apiUrlOptions = [
-  'http://localhost:3001',
-  'http://localhost:1234'
+  'http://localhost:3001/acp',
+  'http://localhost:3001'
 ];
 
 const ACPTester: React.FC<ACPTesterProps> = ({ apiUrl, apiKey }) => {
   const [params, setParams] = useState('');
-  const [response, setResponse] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const [apiUrlValue, setApiUrlValue] = useState(apiUrl);
   const [apiKeyValue, setApiKeyValue] = useState(apiKey);
   const [selectedMethod, setSelectedMethod] = useState(acpMethods[0].value);
   const [showMethodInput, setShowMethodInput] = useState(false);
   const [showUrlInput, setShowUrlInput] = useState(false);
-  const [httpMethod, setHttpMethod] = useState<HttpMethod>(methodConfigs[acpMethods[0].value].method);
+  const [requestId, setRequestId] = useState(1);
+  const [logEntries, setLogEntries] = useState<LogEntry[]>([]);
+  const [autoRefreshLogs, setAutoRefreshLogs] = useState(true);
+  const [agents, setAgents] = useState<AgentOption[]>([]);
+  const [selectedAgent, setSelectedAgent] = useState('');
+  const [agentReady, setAgentReady] = useState(false);
+
+  const apiUrlChoices = useMemo(() => (
+    apiUrlOptions.includes(apiUrlValue)
+      ? apiUrlOptions
+      : [...apiUrlOptions, apiUrlValue]
+  ), [apiUrlValue]);
+
+  const resolveEndpoint = (baseUrl: string, suffix: '/acp' | '/acp/logs' | '/acp/agents' | '/acp/select') => {
+    const trimmed = baseUrl.replace(/\/+$/, '');
+    if (suffix === '/acp') {
+      return trimmed.endsWith('/acp') ? trimmed : `${trimmed}/acp`;
+    }
+    if (trimmed.endsWith(suffix)) {
+      return trimmed;
+    }
+    if (trimmed.endsWith('/acp')) {
+      return `${trimmed}${suffix.replace('/acp', '')}`;
+    }
+    return `${trimmed}${suffix}`;
+  };
+
+  const addLocalLog = (entry: Omit<LogEntry, 'id' | 'timestamp'>) => {
+    setLogEntries((prev) => [
+      ...prev,
+      {
+        id: Date.now(),
+        timestamp: new Date().toISOString(),
+        ...entry
+      }
+    ]);
+  };
+
+  const fetchLogs = async () => {
+    try {
+      const res = await fetch(resolveEndpoint(apiUrlValue, '/acp/logs'));
+      if (!res.ok) {
+        return;
+      }
+      const data = await res.json();
+      if (Array.isArray(data.items)) {
+        setLogEntries((prev) => {
+          const merged = new Map(prev.map((entry) => [entry.id, entry]));
+          data.items.forEach((entry) => merged.set(entry.id, entry));
+          return Array.from(merged.values()).sort((a, b) => a.id - b.id);
+        });
+      }
+    } catch {
+      // Ignore log fetch errors to avoid noisy UI.
+    }
+  };
+
+  const fetchAgents = async () => {
+    try {
+      const res = await fetch(resolveEndpoint(apiUrlValue, '/acp/agents'));
+      if (!res.ok) {
+        addLocalLog({ direction: 'error', payload: 'Failed to load ACP agents.' });
+        return;
+      }
+      const data = await res.json();
+      if (Array.isArray(data.agents)) {
+        setAgents(data.agents);
+        if (!selectedAgent && data.agents.length > 0) {
+          setSelectedAgent(data.agents[0].name);
+        }
+      }
+    } catch {
+      addLocalLog({ direction: 'error', payload: 'Failed to connect to ACP server.' });
+    }
+  };
 
   useEffect(() => {
     const config = methodConfigs[selectedMethod];
     if (config) {
-      setHttpMethod(config.method);
       if (config.template) {
         try {
           const parsed = JSON.parse(config.template);
@@ -120,91 +181,117 @@ const ACPTester: React.FC<ACPTesterProps> = ({ apiUrl, apiKey }) => {
     }
   }, [selectedMethod]);
 
+  useEffect(() => {
+    fetchAgents();
+  }, [apiUrlValue]);
+
+  useEffect(() => {
+    if (!autoRefreshLogs) {
+      return;
+    }
+    fetchLogs();
+    const interval = window.setInterval(fetchLogs, 2000);
+    return () => window.clearInterval(interval);
+  }, [autoRefreshLogs, apiUrlValue]);
+
+  const buildHeaders = () => {
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json'
+    };
+    if (apiKeyValue.trim()) {
+      headers.Authorization = `Bearer ${apiKeyValue.trim()}`;
+    }
+    return headers;
+  };
+
+  const selectAgent = async () => {
+    if (!selectedAgent) {
+      addLocalLog({ direction: 'error', payload: 'Select an ACP agent before starting.' });
+      return;
+    }
+    setLoading(true);
+    try {
+      const res = await fetch(resolveEndpoint(apiUrlValue, '/acp/select'), {
+        method: 'POST',
+        headers: buildHeaders(),
+        body: JSON.stringify({ agent: selectedAgent })
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        addLocalLog({ direction: 'error', payload: data.error?.message || 'Failed to start ACP agent.' });
+        return;
+      }
+      setAgentReady(true);
+      addLocalLog({ direction: 'incoming', payload: `ACP agent "${selectedAgent}" started.` });
+      fetchLogs();
+    } catch {
+      addLocalLog({ direction: 'error', payload: 'Failed to reach ACP server.' });
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
-    setError(null);
-    setResponse(null);
+
+    let requestBody = {};
+    if (params) {
+      try {
+        requestBody = JSON.parse(params);
+      } catch (parseError) {
+        addLocalLog({
+          direction: 'error',
+          payload: `Invalid JSON in parameters: ${parseError instanceof Error ? parseError.message : 'Unknown error'}`
+        });
+        setLoading(false);
+        return;
+      }
+    }
+
+    const payload = {
+      jsonrpc: '2.0',
+      id: requestId,
+      method: selectedMethod,
+      params: requestBody
+    };
+    setRequestId((prev) => prev + 1);
 
     try {
-      const targetPath = selectedMethod.startsWith('/') ? selectedMethod : `/${selectedMethod}`;
-      const proxyUrl = apiUrlValue.includes('localhost:1234')
-        ? `http://localhost:3001${targetPath}`
-        : `${apiUrlValue}${targetPath}`;
-
-      const headers: Record<string, string> = {
-        'Content-Type': 'application/json'
-      };
-      if (apiKeyValue.trim()) {
-        headers.Authorization = `Bearer ${apiKeyValue.trim()}`;
-      }
-
-      let res: Response;
-      if (httpMethod === 'GET' || httpMethod === 'DELETE') {
-        res = await fetch(proxyUrl, {
-          method: httpMethod,
-          headers
-        });
-      } else {
-        let requestBody = {};
-        if (params) {
-          try {
-            requestBody = JSON.parse(params);
-          } catch (parseError) {
-            const errorMsg = `Invalid JSON in parameters: ${parseError instanceof Error ? parseError.message : 'Unknown error'}`;
-            setError(errorMsg);
-            return;
-          }
-        }
-
-        res = await fetch(proxyUrl, {
-          method: httpMethod,
-          headers,
-          body: JSON.stringify(requestBody)
-        });
-      }
+      const res = await fetch(resolveEndpoint(apiUrlValue, '/acp'), {
+        method: 'POST',
+        headers: buildHeaders(),
+        body: JSON.stringify(payload)
+      });
 
       if (!res.ok) {
         const errorData = await res.json().catch(() => ({}));
         const errorMessage = errorData.error?.message ||
           errorData.message ||
           `HTTP Error: ${res.status} - ${res.statusText}`;
-        setError(`API Error: ${errorMessage}`);
+        addLocalLog({ direction: 'error', payload: `API Error: ${errorMessage}` });
         return;
       }
 
-      const contentType = res.headers.get('content-type') || '';
-      if (contentType.includes('application/json')) {
-        const data = await res.json();
-        setResponse(JSON.stringify(data, null, 2));
-      } else {
+      const data = await res.json().catch(() => null);
+      if (!data) {
         const text = await res.text();
-        setResponse(text || 'Empty response');
-      }
-    } catch (err) {
-      if (err instanceof Error) {
-        if (err.name === 'TypeError' && err.message.includes('Failed to fetch')) {
-          if (err.message.includes('CORS') || err.message.includes('Access to fetch')) {
-            setError(`CORS Error: ${err.message}\n\nIf this is a local ACP server:\n- Enable CORS on the server\n- Or route requests through the local proxy on port 3001`);
-          } else {
-            setError(`Network Error: ${err.message}\n\nMake sure the ACP server is running and reachable.`);
-          }
-        } else {
-          setError(`Request Error: ${err.message}`);
+        if (text) {
+          addLocalLog({ direction: 'incoming', payload: text });
         }
-      } else {
-        setError('An unknown error occurred');
       }
+      fetchLogs();
+    } catch (err) {
+      addLocalLog({
+        direction: 'error',
+        payload: err instanceof Error ? err.message : 'Unknown ACP error'
+      });
     } finally {
       setLoading(false);
     }
   };
 
   const currentDescription = methodConfigs[selectedMethod]?.description;
-
-  const apiUrlChoices = apiUrlOptions.includes(apiUrlValue)
-    ? apiUrlOptions
-    : [...apiUrlOptions, apiUrlValue];
 
   return (
     <div>
@@ -253,6 +340,47 @@ const ACPTester: React.FC<ACPTesterProps> = ({ apiUrl, apiKey }) => {
       </div>
 
       <div className="bg-white rounded-lg shadow-md p-6 mb-6">
+        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+          <div>
+            <h2 className="text-xl font-semibold text-gray-700">Agent Selection</h2>
+            <p className="text-sm text-gray-500 mt-1">
+              Pick an ACP agent from your JetBrains config and start a session.
+            </p>
+          </div>
+          <div className="flex items-center gap-3">
+            <span className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-medium ${
+              agentReady ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-600'
+            }`}>
+              <span className={`w-2 h-2 rounded-full mr-2 ${agentReady ? 'bg-green-500' : 'bg-gray-400'}`}></span>
+              {agentReady ? 'Agent Ready' : 'Not Connected'}
+            </span>
+          </div>
+        </div>
+        <div className="mt-4 grid grid-cols-1 md:grid-cols-[1fr_auto] gap-3">
+          <PrettySelect
+            value={selectedAgent}
+            onChange={(value) => {
+              setSelectedAgent(value);
+              setAgentReady(false);
+            }}
+            options={agents.map((agent) => ({ value: agent.name, label: agent.name }))}
+            placeholder="Select ACP agent"
+            className="w-full"
+          />
+          <button
+            type="button"
+            onClick={selectAgent}
+            disabled={loading || !selectedAgent}
+            className={`px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+              loading || !selectedAgent ? 'opacity-50 cursor-not-allowed' : ''
+            }`}
+          >
+            Start Agent
+          </button>
+        </div>
+      </div>
+
+      <div className="bg-white rounded-lg shadow-md p-6 mb-6">
         <h2 className="text-xl font-semibold text-gray-700 mb-4">Test Endpoint</h2>
         <form onSubmit={handleSubmit}>
           <div className="mb-4">
@@ -278,33 +406,15 @@ const ACPTester: React.FC<ACPTesterProps> = ({ apiUrl, apiKey }) => {
                 value={selectedMethod}
                 onChange={(e) => setSelectedMethod(e.target.value)}
                 className="w-full mt-2 px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                placeholder="Enter custom method path"
+                placeholder="Enter custom method name"
               />
             )}
           </div>
 
           <div className="mb-4">
-            <label className="block text-xs font-medium text-gray-600 mb-1">HTTP Method</label>
-            <PrettySelect
-              value={httpMethod}
-              onChange={(value) => setHttpMethod(value as HttpMethod)}
-              options={[
-                { value: 'GET', label: 'GET' },
-                { value: 'POST', label: 'POST' },
-                { value: 'DELETE', label: 'DELETE' }
-              ]}
-              className="w-full"
-            />
-          </div>
-
-          <div className="mb-4">
             <label className="block text-xs font-medium text-gray-600 mb-1">Method Description</label>
             <div className="bg-blue-50 border border-blue-200 text-blue-700 px-4 py-3 rounded-md text-xs">
-              {currentDescription ? (
-                <div dangerouslySetInnerHTML={{ __html: currentDescription }} />
-              ) : (
-                'No description available for this method.'
-              )}
+              {currentDescription || 'No description available for this method.'}
             </div>
           </div>
 
@@ -313,14 +423,9 @@ const ACPTester: React.FC<ACPTesterProps> = ({ apiUrl, apiKey }) => {
             <textarea
               value={params}
               onChange={(e) => setParams(e.target.value)}
-              placeholder='{"role": "user", "content": "Hello from the client"}'
+              placeholder='{"session_id": "session-id"}'
               className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 h-48 text-xs"
             />
-            {(httpMethod === 'GET' || httpMethod === 'DELETE') && (
-              <p className="text-xs text-gray-500 mt-2">
-                Parameters are ignored for GET/DELETE requests.
-              </p>
-            )}
           </div>
 
           <button
@@ -333,21 +438,67 @@ const ACPTester: React.FC<ACPTesterProps> = ({ apiUrl, apiKey }) => {
         </form>
       </div>
 
-      {response && (
-        <div className="bg-white rounded-lg shadow-md p-6">
-          <h2 className="text-xl font-semibold text-gray-700 mb-4">Response</h2>
-          <pre className="bg-gray-100 p-4 rounded-md overflow-auto max-h-96 text-xs">
-            {response}
-          </pre>
+      <div className="bg-white rounded-lg shadow-md p-6 mb-6">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 className="text-xl font-semibold text-gray-700">Live Log</h2>
+            <p className="text-sm text-gray-500 mt-1">
+              Mirrors the ACP CLI output, including requests, responses, and notifications.
+            </p>
+          </div>
+          <div className="flex items-center gap-3">
+            <label className="flex items-center text-sm text-gray-600 gap-2">
+              <input
+                type="checkbox"
+                checked={autoRefreshLogs}
+                onChange={(e) => setAutoRefreshLogs(e.target.checked)}
+              />
+              Auto refresh
+            </label>
+            <button
+              type="button"
+              onClick={fetchLogs}
+              className="px-3 py-2 bg-gray-200 text-gray-700 rounded-md hover:bg-gray-300 focus:outline-none focus:ring-2 focus:ring-gray-500"
+            >
+              Refresh
+            </button>
+          </div>
         </div>
-      )}
-
-      {error && (
-        <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-md">
-          <p className="font-semibold">Error Details:</p>
-          <p>{error}</p>
+        <div className="mt-4 border border-gray-200 rounded-md max-h-96 overflow-auto">
+          {logEntries.length === 0 ? (
+            <div className="p-4 text-sm text-gray-500">No log entries yet.</div>
+          ) : (
+            <ul className="divide-y divide-gray-200">
+              {logEntries.slice().reverse().map((entry) => (
+                <li key={entry.id} className="p-3">
+                  <div className="flex flex-wrap items-center gap-2 text-xs text-gray-500">
+                    <span className="font-mono">{entry.timestamp}</span>
+                    <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${
+                      entry.direction === 'outgoing' ? 'bg-blue-100 text-blue-700' :
+                      entry.direction === 'incoming' ? 'bg-green-100 text-green-700' :
+                      entry.direction === 'notification' ? 'bg-purple-100 text-purple-700' :
+                      entry.direction === 'error' ? 'bg-red-100 text-red-700' :
+                      'bg-gray-100 text-gray-600'
+                    }`}>
+                      {entry.direction}
+                    </span>
+                    {entry.payload?.method && (
+                      <span className="font-mono bg-gray-100 px-2 py-0.5 rounded">
+                        {entry.payload.method}
+                      </span>
+                    )}
+                  </div>
+                  <pre className="mt-2 bg-gray-50 border border-gray-200 rounded p-2 text-xs overflow-auto">
+                    {typeof entry.payload === 'string'
+                      ? entry.payload
+                      : JSON.stringify(entry.payload, null, 2)}
+                  </pre>
+                </li>
+              ))}
+            </ul>
+          )}
         </div>
-      )}
+      </div>
     </div>
   );
 };
