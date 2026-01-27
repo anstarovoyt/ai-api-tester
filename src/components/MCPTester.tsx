@@ -33,9 +33,9 @@ interface LogEntry {
 }
 
 const apiUrlOptions = [
-  'http://localhost:4040',
+  'http://localhost:3001/mcp',
   'http://localhost:3001',
-  'http://localhost:4000'
+  'http://localhost:4000/mcp'
 ];
 
 const defaultInitParams = {

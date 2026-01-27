@@ -80,6 +80,7 @@ const ApiTester: React.FC<ApiTesterProps> = ({ apiUrl, apiKey }) => {
    ];
 
   const apiUrlOptions = [
+    'http://localhost:3001/openAI',
     'http://localhost:1234',
     'https://api.openai.com',
     'https://api.anthropic.com',
@@ -108,9 +109,11 @@ const ApiTester: React.FC<ApiTesterProps> = ({ apiUrl, apiKey }) => {
       console.log('Attempting to send request...');
 
       // Use the proxy server for local API requests
-      const proxyUrl = apiUrlValue.includes('localhost:1234')
-        ? `http://localhost:3001/${selectedMethod.startsWith('/') ? selectedMethod : '/' + selectedMethod}`
-        : `${apiUrlValue}${selectedMethod.startsWith('/') ? selectedMethod : '/' + selectedMethod}`;
+      const methodPath = selectedMethod.startsWith('/') ? selectedMethod : '/' + selectedMethod;
+      const isGateway = apiUrlValue.includes('/openAI') || apiUrlValue.includes('/openai');
+      const proxyUrl = isGateway
+        ? `${apiUrlValue}${methodPath}`
+        : `${apiUrlValue}${methodPath}`;
 
       console.log('Constructed proxy URL:', proxyUrl);
 
