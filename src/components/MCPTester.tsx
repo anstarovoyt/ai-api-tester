@@ -143,6 +143,18 @@ const MCPTester: React.FC<MCPTesterProps> = ({ apiUrl, apiKey }) => {
     return () => window.clearInterval(interval);
   }, [autoRefreshLogs, apiUrlValue]);
 
+  useEffect(() => {
+    if (!availableTools.length || !toolName) {
+      return;
+    }
+    const selectedTool = availableTools.find((tool) => tool.name === toolName);
+    if (!selectedTool || !selectedTool.inputSchema) {
+      return;
+    }
+    const template = buildJsonTemplate(selectedTool.inputSchema);
+    setToolArguments(JSON.stringify(template, null, 2));
+  }, [availableTools, toolName]);
+
   const parseJson = (value: string, label: string) => {
     if (!value.trim()) {
       return {};
@@ -154,6 +166,39 @@ const MCPTester: React.FC<MCPTesterProps> = ({ apiUrl, apiKey }) => {
       setError(errorMsg);
       return null;
     }
+  };
+
+  const buildJsonTemplate = (schema: any): any => {
+    if (!schema || typeof schema !== 'object') {
+      return {};
+    }
+    if (schema.default !== undefined) {
+      return schema.default;
+    }
+    if (Array.isArray(schema.enum) && schema.enum.length > 0) {
+      return schema.enum[0];
+    }
+    if (schema.type === 'object' || schema.properties) {
+      const properties = schema.properties || {};
+      const result: Record<string, any> = {};
+      Object.entries(properties).forEach(([key, value]) => {
+        result[key] = buildJsonTemplate(value);
+      });
+      return result;
+    }
+    if (schema.type === 'array') {
+      return [];
+    }
+    if (schema.type === 'boolean') {
+      return false;
+    }
+    if (schema.type === 'number' || schema.type === 'integer') {
+      return 0;
+    }
+    if (schema.type === 'string') {
+      return '';
+    }
+    return {};
   };
 
   const buildHeaders = () => {
@@ -468,6 +513,21 @@ const MCPTester: React.FC<MCPTesterProps> = ({ apiUrl, apiKey }) => {
                 placeholder="tool_name"
               />
             )}
+            {availableTools.length > 0 && (
+              <div className="mt-2 text-xs text-gray-600">
+                <div className="font-semibold text-gray-700">
+                  {(availableTools.find((tool) => tool.name === toolName)?.title) || toolName}
+                </div>
+                <div className="font-mono text-gray-500">
+                  {availableTools.find((tool) => tool.name === toolName)?.name || toolName}
+                </div>
+                {availableTools.find((tool) => tool.name === toolName)?.description && (
+                  <p className="mt-1 text-gray-600">
+                    {availableTools.find((tool) => tool.name === toolName)?.description}
+                  </p>
+                )}
+              </div>
+            )}
             <label className="block text-xs font-medium text-gray-600 mt-3 mb-1">Tool Arguments (JSON)</label>
             <textarea
               value={toolArguments}
@@ -514,6 +574,26 @@ const MCPTester: React.FC<MCPTesterProps> = ({ apiUrl, apiKey }) => {
                 placeholder="file:///path/to/resource"
               />
             )}
+            {availableResources.length > 0 && (
+              <div className="mt-2 text-xs text-gray-600">
+                <div className="font-semibold text-gray-700">
+                  {availableResources.find((resource) => resource.uri === resourceUri)?.name || resourceUri}
+                </div>
+                <div className="font-mono text-gray-500 break-all">
+                  {availableResources.find((resource) => resource.uri === resourceUri)?.uri || resourceUri}
+                </div>
+                {availableResources.find((resource) => resource.uri === resourceUri)?.description && (
+                  <p className="mt-1 text-gray-600">
+                    {availableResources.find((resource) => resource.uri === resourceUri)?.description}
+                  </p>
+                )}
+                {availableResources.find((resource) => resource.uri === resourceUri)?.mimeType && (
+                  <p className="mt-1 text-gray-500">
+                    {availableResources.find((resource) => resource.uri === resourceUri)?.mimeType}
+                  </p>
+                )}
+              </div>
+            )}
             <button
               type="button"
               onClick={() => sendMcpRequest('resources/read', { uri: resourceUri || 'file:///path/to/resource' })}
@@ -548,6 +628,24 @@ const MCPTester: React.FC<MCPTesterProps> = ({ apiUrl, apiKey }) => {
                 className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
                 placeholder="prompt_name"
               />
+            )}
+            {availablePrompts.length > 0 && (
+              <div className="mt-2 text-xs text-gray-600">
+                <div className="font-semibold text-gray-700">
+                  {availablePrompts.find((prompt) => prompt.name === promptName)?.name || promptName}
+                </div>
+                {availablePrompts.find((prompt) => prompt.name === promptName)?.description && (
+                  <p className="mt-1 text-gray-600">
+                    {availablePrompts.find((prompt) => prompt.name === promptName)?.description}
+                  </p>
+                )}
+                {availablePrompts.find((prompt) => prompt.name === promptName)?.arguments &&
+                  availablePrompts.find((prompt) => prompt.name === promptName)?.arguments?.length ? (
+                    <p className="mt-1 text-gray-500">
+                      Args: {availablePrompts.find((prompt) => prompt.name === promptName)?.arguments?.map((arg) => arg.name).join(', ')}
+                    </p>
+                  ) : null}
+              </div>
             )}
             <label className="block text-xs font-medium text-gray-600 mt-3 mb-1">Prompt Arguments (JSON)</label>
             <textarea
