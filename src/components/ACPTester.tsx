@@ -99,6 +99,7 @@ const ACPTester: React.FC<ACPTesterProps> = ({ apiUrl, apiKey }) => {
   const [sessionRole, setSessionRole] = useState('user');
   const [sessionContent, setSessionContent] = useState('');
   const [sessionInitParams, setSessionInitParams] = useState(`{\n  \"client_id\": \"web-client\",\n  \"metadata\": {\n    \"channel\": \"web\"\n  }\n}`);
+  const [sessionReady, setSessionReady] = useState(false);
 
   const apiUrlChoices = useMemo(() => (
     apiUrlOptions.includes(apiUrlValue)
@@ -273,6 +274,7 @@ const ACPTester: React.FC<ACPTesterProps> = ({ apiUrl, apiKey }) => {
         const sessionFromResult = data.result?.session_id || data.result?.sessionId || data.session_id || data.sessionId;
         if (sessionFromResult) {
           setSessionId(sessionFromResult);
+          setSessionReady(true);
         }
       }
       fetchLogs();
@@ -397,7 +399,130 @@ const ACPTester: React.FC<ACPTesterProps> = ({ apiUrl, apiKey }) => {
       </div>
 
       <div className="bg-white rounded-lg shadow-md p-6 mb-6">
-        <h2 className="text-xl font-semibold text-gray-700 mb-4">Stage 2: Requests</h2>
+        <h2 className="text-xl font-semibold text-gray-700 mb-4">Create Session</h2>
+        <p className="text-sm text-gray-500 mt-1">
+          Provide session init parameters. The returned session ID will be filled automatically.
+        </p>
+        <label className="block text-xs font-medium text-gray-600 mt-4 mb-1">Init Parameters (JSON)</label>
+        <textarea
+          value={sessionInitParams}
+          onChange={(e) => setSessionInitParams(e.target.value)}
+          className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 h-32 text-xs"
+          placeholder='{"client_id":"web-client"}'
+        />
+        <div className="mt-3 flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={() => {
+              try {
+                const parsed = sessionInitParams ? JSON.parse(sessionInitParams) : {};
+                sendAcpRequest('session/init', parsed);
+              } catch (err) {
+                addLocalLog({
+                  direction: 'error',
+                  payload: `Invalid JSON in session init: ${err instanceof Error ? err.message : 'Unknown error'}`
+                });
+              }
+            }}
+            disabled={loading || !selectedAgent}
+            className={`inline-flex items-center px-3 py-1.5 text-sm bg-emerald-600 text-white rounded-md hover:bg-emerald-700 focus:outline-none focus:ring-2 focus:ring-emerald-500 ${
+              loading || !selectedAgent ? 'opacity-50 cursor-not-allowed' : ''
+            }`}
+          >
+            Initialize Session
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              if (!sessionId) {
+                addLocalLog({ direction: 'error', payload: 'Set a session_id before ending the session.' });
+                return;
+              }
+              sendAcpRequest('session/end', { session_id: sessionId });
+            }}
+            disabled={loading || !sessionId}
+            className={`inline-flex items-center px-3 py-1.5 text-sm bg-gray-200 text-gray-700 rounded-md hover:bg-gray-300 focus:outline-none focus:ring-2 focus:ring-gray-500 ${
+              loading || !sessionId ? 'opacity-50 cursor-not-allowed' : ''
+            }`}
+          >
+            End Session
+          </button>
+        </div>
+        {sessionId && (
+          <p className="mt-3 text-xs text-gray-500">Active session: {sessionId}</p>
+        )}
+      </div>
+
+      <div className={`bg-white rounded-lg shadow-md p-6 mb-6 ${sessionReady ? '' : 'opacity-60'}`}>
+        <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+          <div>
+            <h2 className="text-xl font-semibold text-gray-700">Session Communication</h2>
+            <p className="text-sm text-gray-500 mt-1">
+              Send messages in the active session. Unlocks after session initialization.
+            </p>
+          </div>
+          <div className="text-xs text-gray-500">
+            {sessionReady ? 'Session ready' : 'Awaiting session init'}
+          </div>
+        </div>
+        <div className="mt-4 border border-gray-200 rounded-lg p-4">
+          <label className="block text-xs font-medium text-gray-600 mb-1">Session ID</label>
+          <input
+            type="text"
+            value={sessionId}
+            onChange={(e) => setSessionId(e.target.value)}
+            className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+            placeholder="session-id"
+            disabled={!sessionReady}
+          />
+          <label className="block text-xs font-medium text-gray-600 mt-3 mb-1">Role</label>
+          <PrettySelect
+            value={sessionRole}
+            onChange={setSessionRole}
+            options={[
+              { value: 'user', label: 'user' },
+              { value: 'system', label: 'system' },
+              { value: 'assistant', label: 'assistant' }
+            ]}
+            className="w-full"
+          />
+          <label className="block text-xs font-medium text-gray-600 mt-3 mb-1">Message</label>
+          <textarea
+            value={sessionContent}
+            onChange={(e) => setSessionContent(e.target.value)}
+            className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 h-24 text-xs"
+            placeholder="Send a message to the agent..."
+            disabled={!sessionReady}
+          />
+          <div className="mt-3 flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                if (!sessionId) {
+                  addLocalLog({ direction: 'error', payload: 'Set a session_id before sending a message.' });
+                  return;
+                }
+                sendAcpRequest('session/send', {
+                  session_id: sessionId,
+                  message: {
+                    role: sessionRole,
+                    content: sessionContent
+                  }
+                });
+              }}
+              disabled={loading || !sessionId || !sessionReady}
+              className={`inline-flex items-center px-3 py-1.5 text-sm bg-blue-600 text-white rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+                loading || !sessionId || !sessionReady ? 'opacity-50 cursor-not-allowed' : ''
+              }`}
+            >
+              Send Message
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div className="bg-white rounded-lg shadow-md p-6 mb-6">
+        <h2 className="text-xl font-semibold text-gray-700 mb-4">Endpoints</h2>
         <form onSubmit={handleSubmit}>
           <div className="mb-4">
             <label className="block text-xs font-medium text-gray-600 mb-1">ACP Method</label>
@@ -456,124 +581,6 @@ const ACPTester: React.FC<ACPTesterProps> = ({ apiUrl, apiKey }) => {
             {loading ? 'Sending...' : 'Send Request'}
           </button>
         </form>
-      </div>
-
-      <div className="bg-white rounded-lg shadow-md p-6 mb-6">
-        <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-          <div>
-            <h2 className="text-xl font-semibold text-gray-700">Stage 3: Session</h2>
-            <p className="text-sm text-gray-500 mt-1">
-              Initialize a session and send session-bound messages.
-            </p>
-          </div>
-          <div className="text-xs text-gray-500">
-            {sessionId ? `Active session: ${sessionId}` : 'No session selected'}
-          </div>
-        </div>
-        <div className="mt-4 grid grid-cols-1 lg:grid-cols-[1.1fr_1fr] gap-4">
-          <div className="border border-gray-200 rounded-lg p-4">
-            <h3 className="text-sm font-semibold text-gray-700">Initialize Session</h3>
-            <p className="text-xs text-gray-500 mt-1">
-              Provide session init parameters. The returned session ID will be filled automatically.
-            </p>
-            <label className="block text-xs font-medium text-gray-600 mt-3 mb-1">Init Parameters (JSON)</label>
-            <textarea
-              value={sessionInitParams}
-              onChange={(e) => setSessionInitParams(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 h-32 text-xs"
-              placeholder='{"client_id":"web-client"}'
-            />
-            <button
-              type="button"
-              onClick={() => {
-                try {
-                  const parsed = sessionInitParams ? JSON.parse(sessionInitParams) : {};
-                  sendAcpRequest('session/init', parsed);
-                } catch (err) {
-                  addLocalLog({
-                    direction: 'error',
-                    payload: `Invalid JSON in session init: ${err instanceof Error ? err.message : 'Unknown error'}`
-                  });
-                }
-              }}
-              disabled={loading || !selectedAgent}
-              className={`mt-3 inline-flex items-center px-3 py-1.5 text-sm bg-emerald-600 text-white rounded-md hover:bg-emerald-700 focus:outline-none focus:ring-2 focus:ring-emerald-500 ${
-                loading || !selectedAgent ? 'opacity-50 cursor-not-allowed' : ''
-              }`}
-            >
-              Initialize Session
-            </button>
-          </div>
-          <div className="border border-gray-200 rounded-lg p-4">
-            <h3 className="text-sm font-semibold text-gray-700">Send Message</h3>
-            <label className="block text-xs font-medium text-gray-600 mt-3 mb-1">Session ID</label>
-            <input
-              type="text"
-              value={sessionId}
-              onChange={(e) => setSessionId(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-              placeholder="session-id"
-            />
-            <label className="block text-xs font-medium text-gray-600 mt-3 mb-1">Role</label>
-            <PrettySelect
-              value={sessionRole}
-              onChange={setSessionRole}
-              options={[
-                { value: 'user', label: 'user' },
-                { value: 'system', label: 'system' },
-                { value: 'assistant', label: 'assistant' }
-              ]}
-              className="w-full"
-            />
-            <label className="block text-xs font-medium text-gray-600 mt-3 mb-1">Message</label>
-            <textarea
-              value={sessionContent}
-              onChange={(e) => setSessionContent(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 h-24 text-xs"
-              placeholder="Send a message to the agent..."
-            />
-            <div className="mt-3 flex flex-wrap gap-2">
-              <button
-                type="button"
-                onClick={() => {
-                  if (!sessionId) {
-                    addLocalLog({ direction: 'error', payload: 'Set a session_id before sending a message.' });
-                    return;
-                  }
-                  sendAcpRequest('session/send', {
-                    session_id: sessionId,
-                    message: {
-                      role: sessionRole,
-                      content: sessionContent
-                    }
-                  });
-                }}
-                disabled={loading || !sessionId}
-                className={`inline-flex items-center px-3 py-1.5 text-sm bg-blue-600 text-white rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 ${
-                  loading || !sessionId ? 'opacity-50 cursor-not-allowed' : ''
-                }`}
-              >
-                Send Message
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  if (!sessionId) {
-                    addLocalLog({ direction: 'error', payload: 'Set a session_id before ending the session.' });
-                    return;
-                  }
-                  sendAcpRequest('session/end', { session_id: sessionId });
-                }}
-                disabled={loading || !sessionId}
-                className={`inline-flex items-center px-3 py-1.5 text-sm bg-gray-200 text-gray-700 rounded-md hover:bg-gray-300 focus:outline-none focus:ring-2 focus:ring-gray-500 ${
-                  loading || !sessionId ? 'opacity-50 cursor-not-allowed' : ''
-                }`}
-              >
-                End Session
-              </button>
-            </div>
-          </div>
-        </div>
       </div>
 
       <div className="bg-white rounded-lg shadow-md p-6 mb-6">
