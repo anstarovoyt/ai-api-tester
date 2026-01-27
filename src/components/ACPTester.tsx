@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import PrettySelect from './PrettySelect';
 
 interface ACPTesterProps {
@@ -171,6 +171,7 @@ const ACPTester: React.FC<ACPTesterProps> = ({ apiUrl, apiKey }) => {
   const [availableModes, setAvailableModes] = useState<ModeOption[]>([]);
   const [selectedModeId, setSelectedModeId] = useState('');
   const [pendingPrompts, setPendingPrompts] = useState<Set<number>>(new Set());
+  const autoModelSessionRef = useRef<string | null>(null);
 
   // @ts-ignore
   const formatContentBlock = (content: any) => {
@@ -428,7 +429,7 @@ const ACPTester: React.FC<ACPTesterProps> = ({ apiUrl, apiKey }) => {
       addLocalLog({ direction: 'error', payload: 'Start a session before switching modes.' });
       return;
     }
-    sendAcpRequest('session/set_mode', {
+    void sendAcpRequest('session/set_mode', {
       sessionId,
       modeId
     });
@@ -440,21 +441,21 @@ const ACPTester: React.FC<ACPTesterProps> = ({ apiUrl, apiKey }) => {
       addLocalLog({ direction: 'error', payload: 'Start a session before switching models.' });
       return;
     }
-    sendAcpRequest('session/set_model', {
+    void sendAcpRequest('session/set_model', {
       sessionId,
       modelId
     });
   };
 
   useEffect(() => {
-    fetchAgents();
+    void fetchAgents();
   }, [apiUrlValue]);
 
   useEffect(() => {
     if (!autoRefreshLogs) {
       return;
     }
-    fetchLogs();
+    void fetchLogs();
     const interval = window.setInterval(fetchLogs, 2000);
     return () => window.clearInterval(interval);
   }, [autoRefreshLogs, apiUrlValue]);
@@ -488,7 +489,7 @@ const ACPTester: React.FC<ACPTesterProps> = ({ apiUrl, apiKey }) => {
       }
       setAgentReady(true);
       addLocalLog({ direction: 'incoming', payload: `ACP agent "${selectedAgent}" started.` });
-      fetchLogs();
+      void fetchLogs();
     } catch {
       addLocalLog({ direction: 'error', payload: 'Failed to reach ACP server.' });
     } finally {
@@ -501,10 +502,26 @@ const ACPTester: React.FC<ACPTesterProps> = ({ apiUrl, apiKey }) => {
     const currentModelId = result?.models?.currentModelId;
     if (Array.isArray(models)) {
       setAvailableModels(models);
+      const qwenModel = models.find((model) =>
+        model.modelId.toLowerCase().includes('qwen') || model.name.toLowerCase().includes('qwen')
+      );
       if (currentModelId) {
         setSelectedModelId(currentModelId);
+      } else if (qwenModel) {
+        setSelectedModelId(qwenModel.modelId);
       } else if (models.length > 0) {
         setSelectedModelId(models[0].modelId);
+      }
+
+      if (sessionId && sessionReady && qwenModel && currentModelId && currentModelId !== qwenModel.modelId) {
+        if (autoModelSessionRef.current !== sessionId) {
+          autoModelSessionRef.current = sessionId;
+          setSelectedModelId(qwenModel.modelId);
+          void sendAcpRequest('session/set_model', {
+            sessionId,
+            modelId: qwenModel.modelId
+          });
+        }
       }
     }
 
@@ -576,7 +593,7 @@ const ACPTester: React.FC<ACPTesterProps> = ({ apiUrl, apiKey }) => {
         }
       }
       updateModelAndModeState(data.result);
-      fetchLogs();
+      void fetchLogs();
       return data;
     } catch (err) {
       addLocalLog({
@@ -627,7 +644,7 @@ const ACPTester: React.FC<ACPTesterProps> = ({ apiUrl, apiKey }) => {
           addLocalLog({ direction: 'incoming', payload: text });
         }
       }
-      fetchLogs();
+      void fetchLogs();
     } catch (err) {
       addLocalLog({
         direction: 'error',
@@ -849,7 +866,7 @@ const ACPTester: React.FC<ACPTesterProps> = ({ apiUrl, apiKey }) => {
                 const parsed = sessionInitParams ? JSON.parse(sessionInitParams) : {};
                 const method = typeof parsed.method === 'string' ? parsed.method : sessionCommand;
                 const paramsPayload = parsed.params && typeof parsed.params === 'object' ? parsed.params : parsed;
-                sendAcpRequest(method, paramsPayload);
+                void sendAcpRequest(method, paramsPayload);
               } catch (err) {
                 addLocalLog({
                   direction: 'error',
@@ -979,9 +996,9 @@ const ACPTester: React.FC<ACPTesterProps> = ({ apiUrl, apiKey }) => {
                 try {
                   const parsed = sessionParams ? JSON.parse(sessionParams) : {};
                   if (sessionMethod === 'session/cancel') {
-                    sendAcpNotification(sessionMethod, parsed);
+                    void sendAcpNotification(sessionMethod, parsed);
                   } else {
-                    sendAcpRequest(sessionMethod, parsed);
+                    void sendAcpRequest(sessionMethod, parsed);
                   }
                 } catch (err) {
                   addLocalLog({
