@@ -80,6 +80,7 @@ class ACPRuntime extends EventEmitter {
           this.pendingRequests.delete(parsed.id);
         }
         if (parsed.method && !("id" in parsed)) {
+          this.emit("notification", parsed);
           this.pushLog({ direction: "notification", payload: parsed });
         } else {
           this.pushLog({ direction: "incoming", payload: parsed });
