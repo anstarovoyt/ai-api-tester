@@ -2,6 +2,7 @@ const fs = require("fs");
 const path = require("path");
 const { spawn } = require("child_process");
 const readline = require("readline");
+const express = require("express");
 
 const colors = {
   reset: "\x1b[0m",
@@ -50,6 +51,22 @@ const child = spawn(config.command, config.args || [], {
   stdio: ["pipe", "pipe", "pipe"]
 });
 
+const pendingRequests = new Map();
+const logEntries = [];
+let logCounter = 1;
+
+const pushLog = (entry) => {
+  const item = {
+    id: logCounter++,
+    timestamp: new Date().toISOString(),
+    ...entry
+  };
+  logEntries.push(item);
+  if (logEntries.length > 500) {
+    logEntries.shift();
+  }
+};
+
 child.on("exit", (code) => {
   console.log(colorize("yellow", `\nMCP process exited with code ${code ?? "unknown"}`));
   process.exit(code ?? 0);
@@ -89,8 +106,20 @@ const handleLine = (line) => {
 
   try {
     const parsed = JSON.parse(trimmed);
+    if (parsed && typeof parsed === "object") {
+      if (parsed.id !== undefined && pendingRequests.has(parsed.id)) {
+        pendingRequests.get(parsed.id)(parsed);
+        pendingRequests.delete(parsed.id);
+      }
+      if (parsed.method && !("id" in parsed)) {
+        pushLog({ direction: "notification", payload: parsed });
+      } else {
+        pushLog({ direction: "incoming", payload: parsed });
+      }
+    }
     console.log(`\n${formatBanner("< RESPONSE")}\n${colorize("green", JSON.stringify(parsed, null, 2))}`);
   } catch {
+    pushLog({ direction: "raw", payload: trimmed });
     console.log(`\n${formatBanner("< RESPONSE")}\n${colorize("green", trimmed)}`);
   }
   rl.prompt();
@@ -109,6 +138,7 @@ child.stdout.on("data", (chunk) => {
 child.stderr.on("data", (chunk) => {
   const message = chunk.toString("utf8");
   if (message.trim()) {
+    pushLog({ direction: "error", payload: message.trim() });
     console.error(`\n${colorize("red", "[stderr]")} ${message.trim()}`);
     rl.prompt();
   }
@@ -129,6 +159,7 @@ const sendRequest = (method, params) => {
     method,
     params
   };
+  pushLog({ direction: "outgoing", payload });
   child.stdin.write(`${JSON.stringify(payload)}\n`);
   console.log(`\n${formatBanner("> REQUEST")}\n${colorize("cyan", JSON.stringify(payload, null, 2))}`);
 };
@@ -139,6 +170,7 @@ const sendNotification = (method, params) => {
     method,
     params
   };
+  pushLog({ direction: "outgoing", payload });
   child.stdin.write(`${JSON.stringify(payload)}\n`);
   console.log(`\n${formatBanner("> NOTIFY")}\n${colorize("magenta", JSON.stringify(payload, null, 2))}`);
 };
@@ -243,4 +275,70 @@ rl.on("line", (line) => {
 rl.on("close", () => {
   console.log("\nClosing MCP CLI...");
   child.kill();
+});
+
+const app = express();
+app.use(express.json({ limit: "2mb" }));
+app.use((req, res, next) => {
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "*");
+  res.setHeader("Access-Control-Allow-Headers", "*");
+  if (req.method === "OPTIONS") {
+    res.sendStatus(204);
+    return;
+  }
+  next();
+});
+
+app.post("/mcp", async (req, res) => {
+  const payload = req.body;
+  if (!payload || typeof payload !== "object") {
+    res.status(400).json({ error: { message: "Invalid JSON-RPC payload" } });
+    return;
+  }
+
+  const isNotification = payload.id === undefined || payload.id === null;
+  const outgoing = {
+    jsonrpc: payload.jsonrpc || "2.0",
+    method: payload.method,
+    params: payload.params ?? {}
+  };
+  if (!isNotification) {
+    outgoing.id = payload.id;
+  }
+
+  if (!outgoing.method) {
+    res.status(400).json({ error: { message: "Missing method in JSON-RPC payload" } });
+    return;
+  }
+
+  pushLog({ direction: "outgoing", payload: outgoing });
+  child.stdin.write(`${JSON.stringify(outgoing)}\n`);
+
+  if (isNotification) {
+    res.json({ ok: true });
+    return;
+  }
+
+  const response = await new Promise((resolve) => {
+    const timeout = setTimeout(() => {
+      pendingRequests.delete(outgoing.id);
+      resolve({ error: { message: "Response timeout" } });
+    }, 30_000);
+    pendingRequests.set(outgoing.id, (data) => {
+      clearTimeout(timeout);
+      resolve(data);
+    });
+  });
+
+  res.json(response);
+});
+
+app.get("/mcp/logs", (req, res) => {
+  res.json({ items: logEntries });
+});
+
+const webPort = process.env.MCP_CLI_PORT || 3001;
+app.listen(webPort, () => {
+  console.log(colorize("green", `MCP web server running on http://localhost:${webPort}`));
 });

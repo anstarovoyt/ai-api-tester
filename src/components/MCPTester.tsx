@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 
 interface MCPTesterProps {
   apiUrl: string;
@@ -25,7 +25,15 @@ interface Prompt {
   arguments?: Array<{ name: string; description?: string; required?: boolean }>;
 }
 
+interface LogEntry {
+  id: number;
+  timestamp: string;
+  direction: 'outgoing' | 'incoming' | 'notification' | 'raw' | 'error';
+  payload: any;
+}
+
 const apiUrlOptions = [
+  'http://localhost:4040',
   'http://localhost:3001',
   'http://localhost:4000'
 ];
@@ -77,6 +85,8 @@ const MCPTester: React.FC<MCPTesterProps> = ({ apiUrl, apiKey }) => {
   const [isInitialized, setIsInitialized] = useState(false);
   const [serverName, setServerName] = useState<string | null>(null);
   const [serverVersion, setServerVersion] = useState<string | null>(null);
+  const [logEntries, setLogEntries] = useState<LogEntry[]>([]);
+  const [autoRefreshLogs, setAutoRefreshLogs] = useState(true);
   const [availableTools, setAvailableTools] = useState<Tool[]>([]);
   const [availableResources, setAvailableResources] = useState<Resource[]>([]);
   const [availablePrompts, setAvailablePrompts] = useState<Prompt[]>([]);
@@ -94,6 +104,44 @@ const MCPTester: React.FC<MCPTesterProps> = ({ apiUrl, apiKey }) => {
       ? apiUrlOptions
       : [...apiUrlOptions, apiUrlValue]
   ), [apiUrlValue]);
+
+  const resolveEndpoint = (baseUrl: string, suffix: '/mcp' | '/mcp/logs') => {
+    const trimmed = baseUrl.replace(/\/+$/, '');
+    if (suffix === '/mcp') {
+      return trimmed.endsWith('/mcp') ? trimmed : `${trimmed}/mcp`;
+    }
+    if (trimmed.endsWith('/mcp/logs')) {
+      return trimmed;
+    }
+    if (trimmed.endsWith('/mcp')) {
+      return `${trimmed}/logs`;
+    }
+    return `${trimmed}/mcp/logs`;
+  };
+
+  const fetchLogs = async () => {
+    try {
+      const res = await fetch(resolveEndpoint(apiUrlValue, '/mcp/logs'));
+      if (!res.ok) {
+        return;
+      }
+      const data = await res.json();
+      if (Array.isArray(data.items)) {
+        setLogEntries(data.items);
+      }
+    } catch {
+      // Ignore log fetch errors to avoid noisy UI.
+    }
+  };
+
+  useEffect(() => {
+    if (!autoRefreshLogs) {
+      return;
+    }
+    fetchLogs();
+    const interval = window.setInterval(fetchLogs, 2000);
+    return () => window.clearInterval(interval);
+  }, [autoRefreshLogs, apiUrlValue]);
 
   const parseJson = (value: string, label: string) => {
     if (!value.trim()) {
@@ -160,7 +208,7 @@ const MCPTester: React.FC<MCPTesterProps> = ({ apiUrl, apiKey }) => {
       };
       setRequestId((prev) => prev + 1);
 
-      const res = await fetch(apiUrlValue, {
+      const res = await fetch(resolveEndpoint(apiUrlValue, '/mcp'), {
         method: 'POST',
         headers: buildHeaders(),
         body: JSON.stringify(requestBody)
@@ -179,9 +227,11 @@ const MCPTester: React.FC<MCPTesterProps> = ({ apiUrl, apiKey }) => {
       if (data) {
         setResponse(JSON.stringify(data, null, 2));
         handleResponse(method, data);
+        fetchLogs();
       } else {
         const text = await res.text();
         setResponse(text || 'Empty response');
+        fetchLogs();
       }
     } catch (err) {
       if (err instanceof Error) {
@@ -213,7 +263,7 @@ const MCPTester: React.FC<MCPTesterProps> = ({ apiUrl, apiKey }) => {
         method
       };
 
-      const res = await fetch(apiUrlValue, {
+      const res = await fetch(resolveEndpoint(apiUrlValue, '/mcp'), {
         method: 'POST',
         headers: buildHeaders(),
         body: JSON.stringify(requestBody)
@@ -235,6 +285,7 @@ const MCPTester: React.FC<MCPTesterProps> = ({ apiUrl, apiKey }) => {
         const text = await res.text();
         setResponse(text || 'Notification sent');
       }
+      fetchLogs();
     } catch (err) {
       if (err instanceof Error) {
         setError(`Request Error: ${err.message}`);
@@ -596,6 +647,68 @@ const MCPTester: React.FC<MCPTesterProps> = ({ apiUrl, apiKey }) => {
           </button>
         </form>
       </details>
+
+      <div className="bg-white rounded-lg shadow-md p-6 mb-6">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 className="text-xl font-semibold text-gray-700">Live Log</h2>
+            <p className="text-sm text-gray-500 mt-1">
+              Mirrors the MCP CLI output, including requests, responses, and notifications.
+            </p>
+          </div>
+          <div className="flex items-center gap-3">
+            <label className="flex items-center text-sm text-gray-600 gap-2">
+              <input
+                type="checkbox"
+                checked={autoRefreshLogs}
+                onChange={(e) => setAutoRefreshLogs(e.target.checked)}
+              />
+              Auto refresh
+            </label>
+            <button
+              type="button"
+              onClick={fetchLogs}
+              className="px-3 py-2 bg-gray-200 text-gray-700 rounded-md hover:bg-gray-300 focus:outline-none focus:ring-2 focus:ring-gray-500"
+            >
+              Refresh
+            </button>
+          </div>
+        </div>
+        <div className="mt-4 border border-gray-200 rounded-md max-h-96 overflow-auto">
+          {logEntries.length === 0 ? (
+            <div className="p-4 text-sm text-gray-500">No log entries yet.</div>
+          ) : (
+            <ul className="divide-y divide-gray-200">
+              {logEntries.slice().reverse().map((entry) => (
+                <li key={entry.id} className="p-3">
+                  <div className="flex flex-wrap items-center gap-2 text-xs text-gray-500">
+                    <span className="font-mono">{entry.timestamp}</span>
+                    <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${
+                      entry.direction === 'outgoing' ? 'bg-blue-100 text-blue-700' :
+                      entry.direction === 'incoming' ? 'bg-green-100 text-green-700' :
+                      entry.direction === 'notification' ? 'bg-purple-100 text-purple-700' :
+                      entry.direction === 'error' ? 'bg-red-100 text-red-700' :
+                      'bg-gray-100 text-gray-600'
+                    }`}>
+                      {entry.direction}
+                    </span>
+                    {entry.payload?.method && (
+                      <span className="font-mono bg-gray-100 px-2 py-0.5 rounded">
+                        {entry.payload.method}
+                      </span>
+                    )}
+                  </div>
+                  <pre className="mt-2 bg-gray-50 border border-gray-200 rounded p-2 text-xs overflow-auto">
+                    {typeof entry.payload === 'string'
+                      ? entry.payload
+                      : JSON.stringify(entry.payload, null, 2)}
+                  </pre>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </div>
 
       {response && (
         <div className="bg-white rounded-lg shadow-md p-6">
