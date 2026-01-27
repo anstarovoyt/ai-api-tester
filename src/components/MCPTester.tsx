@@ -75,9 +75,7 @@ const mcpMethods = [
 ];
 
 const MCPTester: React.FC<MCPTesterProps> = ({ apiUrl, apiKey }) => {
-  const [response, setResponse] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const [apiUrlValue, setApiUrlValue] = useState(apiUrl);
   const [apiKeyValue, setApiKeyValue] = useState(apiKey);
   const [showUrlInput, setShowUrlInput] = useState(false);
@@ -135,6 +133,17 @@ const MCPTester: React.FC<MCPTesterProps> = ({ apiUrl, apiKey }) => {
     }
   };
 
+  const addLocalLog = (entry: Omit<LogEntry, 'id' | 'timestamp'>) => {
+    setLogEntries((prev) => [
+      ...prev,
+      {
+        id: Date.now(),
+        timestamp: new Date().toISOString(),
+        ...entry
+      }
+    ]);
+  };
+
   useEffect(() => {
     if (!autoRefreshLogs) {
       return;
@@ -164,7 +173,7 @@ const MCPTester: React.FC<MCPTesterProps> = ({ apiUrl, apiKey }) => {
       return JSON.parse(value);
     } catch (parseError) {
       const errorMsg = `Invalid JSON in ${label}: ${parseError instanceof Error ? parseError.message : 'Unknown error'}`;
-      setError(errorMsg);
+      addLocalLog({ direction: 'error', payload: errorMsg });
       return null;
     }
   };
@@ -242,8 +251,6 @@ const MCPTester: React.FC<MCPTesterProps> = ({ apiUrl, apiKey }) => {
 
   const sendMcpRequest = async (method: string, params: object) => {
     setLoading(true);
-    setError(null);
-    setResponse(null);
 
     try {
       const requestBody = {
@@ -265,33 +272,40 @@ const MCPTester: React.FC<MCPTesterProps> = ({ apiUrl, apiKey }) => {
         const errorMessage = errorData.error?.message ||
           errorData.message ||
           `HTTP Error: ${res.status} - ${res.statusText}`;
-        setError(`API Error: ${errorMessage}`);
+        addLocalLog({ direction: 'error', payload: `API Error: ${errorMessage}` });
         return;
       }
 
       const data = await res.json().catch(() => null);
       if (data) {
-        setResponse(JSON.stringify(data, null, 2));
         handleResponse(method, data);
         fetchLogs();
       } else {
         const text = await res.text();
-        setResponse(text || 'Empty response');
+        if (text) {
+          addLocalLog({ direction: 'incoming', payload: text });
+        }
         fetchLogs();
       }
     } catch (err) {
       if (err instanceof Error) {
         if (err.name === 'TypeError' && err.message.includes('Failed to fetch')) {
           if (err.message.includes('CORS') || err.message.includes('Access to fetch')) {
-            setError(`CORS Error: ${err.message}\n\nIf this is a local MCP server:\n- Enable CORS on the server\n- Or route requests through the local proxy on port 3001`);
+            addLocalLog({
+              direction: 'error',
+              payload: `CORS Error: ${err.message}\n\nIf this is a local MCP server:\n- Enable CORS on the server\n- Or route requests through the local proxy on port 3001`
+            });
           } else {
-            setError(`Network Error: ${err.message}\n\nMake sure the MCP server is running and reachable.`);
+            addLocalLog({
+              direction: 'error',
+              payload: `Network Error: ${err.message}\n\nMake sure the MCP server is running and reachable.`
+            });
           }
         } else {
-          setError(`Request Error: ${err.message}`);
+          addLocalLog({ direction: 'error', payload: `Request Error: ${err.message}` });
         }
       } else {
-        setError('An unknown error occurred');
+        addLocalLog({ direction: 'error', payload: 'An unknown error occurred' });
       }
     } finally {
       setLoading(false);
@@ -300,8 +314,6 @@ const MCPTester: React.FC<MCPTesterProps> = ({ apiUrl, apiKey }) => {
 
   const sendNotification = async (method: string) => {
     setLoading(true);
-    setError(null);
-    setResponse(null);
 
     try {
       const requestBody = {
@@ -320,23 +332,23 @@ const MCPTester: React.FC<MCPTesterProps> = ({ apiUrl, apiKey }) => {
         const errorMessage = errorData.error?.message ||
           errorData.message ||
           `HTTP Error: ${res.status} - ${res.statusText}`;
-        setError(`API Error: ${errorMessage}`);
+        addLocalLog({ direction: 'error', payload: `API Error: ${errorMessage}` });
         return;
       }
 
       const data = await res.json().catch(() => null);
-      if (data) {
-        setResponse(JSON.stringify(data, null, 2));
-      } else {
+      if (!data) {
         const text = await res.text();
-        setResponse(text || 'Notification sent');
+        if (text) {
+          addLocalLog({ direction: 'incoming', payload: text });
+        }
       }
       fetchLogs();
     } catch (err) {
       if (err instanceof Error) {
-        setError(`Request Error: ${err.message}`);
+        addLocalLog({ direction: 'error', payload: `Request Error: ${err.message}` });
       } else {
-        setError('An unknown error occurred');
+        addLocalLog({ direction: 'error', payload: 'An unknown error occurred' });
       }
     } finally {
       setLoading(false);
@@ -874,21 +886,6 @@ const MCPTester: React.FC<MCPTesterProps> = ({ apiUrl, apiKey }) => {
         </div>
       </div>
 
-      {response && (
-        <div className="bg-white rounded-lg shadow-md p-6">
-          <h2 className="text-xl font-semibold text-gray-700 mb-4">Response</h2>
-          <pre className="bg-gray-100 p-4 rounded-md overflow-auto max-h-96 text-xs">
-            {response}
-          </pre>
-        </div>
-      )}
-
-      {error && (
-        <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-md">
-          <p className="font-semibold">Error Details:</p>
-          <p>{error}</p>
-        </div>
-      )}
     </div>
   );
 };
