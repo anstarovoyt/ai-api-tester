@@ -98,6 +98,7 @@ const MCPTester: React.FC<MCPTesterProps> = ({ apiUrl, apiKey }) => {
   const [advancedMethod, setAdvancedMethod] = useState('initialize');
   const [advancedParams, setAdvancedParams] = useState(JSON.stringify(defaultInitParams, null, 2));
   const [showMethodInput, setShowMethodInput] = useState(false);
+  const [stage3Tab, setStage3Tab] = useState<'tools' | 'resources' | 'prompts'>('tools');
 
   const apiUrlChoices = useMemo(() => (
     apiUrlOptions.includes(apiUrlValue)
@@ -487,8 +488,29 @@ const MCPTester: React.FC<MCPTesterProps> = ({ apiUrl, apiKey }) => {
 
       <div className="bg-white rounded-lg shadow-md p-6 mb-6">
         <h2 className="text-xl font-semibold text-gray-700">Stage 3: Use Capabilities</h2>
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mt-4">
-          <div className="border border-gray-200 rounded-lg p-4">
+        <div className="mt-4 flex flex-wrap gap-2 border-b border-gray-200">
+          {[
+            { id: 'tools', label: `Tools (${availableTools.length})` },
+            { id: 'resources', label: `Resources (${availableResources.length})` },
+            { id: 'prompts', label: `Prompts (${availablePrompts.length})` }
+          ].map((tab) => (
+            <button
+              key={tab.id}
+              type="button"
+              onClick={() => setStage3Tab(tab.id as 'tools' | 'resources' | 'prompts')}
+              className={`px-4 py-2 text-sm font-medium border-b-2 ${
+                stage3Tab === tab.id
+                  ? 'border-blue-500 text-blue-600'
+                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+              }`}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+
+        {stage3Tab === 'tools' && (
+          <div className="mt-6 border border-gray-200 rounded-lg p-5">
             <h3 className="text-lg font-semibold text-gray-700">Tools</h3>
             <p className="text-xs text-gray-500 mt-1">{methodDescriptions['tools/call']}</p>
             <label className="block text-xs font-medium text-gray-600 mt-4 mb-1">Tool</label>
@@ -528,11 +550,51 @@ const MCPTester: React.FC<MCPTesterProps> = ({ apiUrl, apiKey }) => {
                 )}
               </div>
             )}
+            {availableTools.length > 0 && availableTools.find((tool) => tool.name === toolName)?.inputSchema && (
+              <div className="mt-3 bg-blue-50 border border-blue-200 rounded-md p-3">
+                <div className="text-xs font-semibold text-blue-700 mb-2">Tool Parameters</div>
+                <ul className="space-y-2 text-xs text-blue-900 max-h-40 overflow-auto">
+                  {(() => {
+                    const schema = availableTools.find((tool) => tool.name === toolName)?.inputSchema as any;
+                    const properties = schema?.properties || {};
+                    const required = new Set<string>(schema?.required || []);
+                    const entries = Object.entries(properties);
+                    if (!entries.length) {
+                      return <li className="text-blue-800">No parameters defined.</li>;
+                    }
+                    return entries.map(([name, value]) => {
+                      const type = (value as any)?.type || 'any';
+                      const description = (value as any)?.description;
+                      const enumValues = Array.isArray((value as any)?.enum) ? (value as any).enum : null;
+                      return (
+                        <li key={name} className="border border-blue-100 rounded-md p-2 bg-white/60">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="font-mono text-blue-900">{name}</span>
+                            <span className="text-[11px] text-blue-700">({type})</span>
+                            {required.has(name) && (
+                              <span className="text-[11px] text-blue-700 font-semibold">required</span>
+                            )}
+                          </div>
+                          {description && (
+                            <div className="mt-1 text-blue-800">{description}</div>
+                          )}
+                          {enumValues && (
+                            <div className="mt-1 text-[11px] text-blue-700">
+                              Options: {enumValues.join(', ')}
+                            </div>
+                          )}
+                        </li>
+                      );
+                    });
+                  })()}
+                </ul>
+              </div>
+            )}
             <label className="block text-xs font-medium text-gray-600 mt-3 mb-1">Tool Arguments (JSON)</label>
             <textarea
               value={toolArguments}
               onChange={(e) => setToolArguments(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 h-28 text-xs"
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 h-40 text-xs"
               placeholder="{}"
             />
             <button
@@ -543,13 +605,15 @@ const MCPTester: React.FC<MCPTesterProps> = ({ apiUrl, apiKey }) => {
                 sendMcpRequest('tools/call', { name: toolName || 'tool_name', arguments: parsed });
               }}
               disabled={loading}
-              className={`mt-3 w-full px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 ${loading ? 'opacity-50 cursor-not-allowed' : ''}`}
+              className={`mt-3 inline-flex items-center px-3 py-1.5 text-sm bg-blue-600 text-white rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 ${loading ? 'opacity-50 cursor-not-allowed' : ''}`}
             >
               Call Tool
             </button>
           </div>
+        )}
 
-          <div className="border border-gray-200 rounded-lg p-4">
+        {stage3Tab === 'resources' && (
+          <div className="mt-6 border border-gray-200 rounded-lg p-5">
             <h3 className="text-lg font-semibold text-gray-700">Resources</h3>
             <p className="text-xs text-gray-500 mt-1">{methodDescriptions['resources/read']}</p>
             <label className="block text-xs font-medium text-gray-600 mt-4 mb-1">Resource URI</label>
@@ -603,8 +667,10 @@ const MCPTester: React.FC<MCPTesterProps> = ({ apiUrl, apiKey }) => {
               Read Resource
             </button>
           </div>
+        )}
 
-          <div className="border border-gray-200 rounded-lg p-4">
+        {stage3Tab === 'prompts' && (
+          <div className="mt-6 border border-gray-200 rounded-lg p-5">
             <h3 className="text-lg font-semibold text-gray-700">Prompts</h3>
             <p className="text-xs text-gray-500 mt-1">{methodDescriptions['prompts/get']}</p>
             <label className="block text-xs font-medium text-gray-600 mt-4 mb-1">Prompt</label>
@@ -651,7 +717,7 @@ const MCPTester: React.FC<MCPTesterProps> = ({ apiUrl, apiKey }) => {
             <textarea
               value={promptArguments}
               onChange={(e) => setPromptArguments(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 h-28 text-xs"
+              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 h-40 text-xs"
               placeholder="{}"
             />
             <button
@@ -667,7 +733,7 @@ const MCPTester: React.FC<MCPTesterProps> = ({ apiUrl, apiKey }) => {
               Get Prompt
             </button>
           </div>
-        </div>
+        )}
       </div>
 
       <details className="bg-white rounded-lg shadow-md p-6 mb-6">
