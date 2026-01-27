@@ -284,13 +284,13 @@ const MCPTester: React.FC<MCPTesterProps> = ({ apiUrl, apiKey }) => {
       const data = await res.json().catch(() => null);
       if (data) {
         handleResponse(method, data);
-        fetchLogs();
+        void fetchLogs();
       } else {
         const text = await res.text();
         if (text) {
           addLocalLog({ direction: 'incoming', payload: text });
         }
-        fetchLogs();
+        void fetchLogs();
       }
     } catch (err) {
       if (err instanceof Error) {
@@ -348,7 +348,7 @@ const MCPTester: React.FC<MCPTesterProps> = ({ apiUrl, apiKey }) => {
           addLocalLog({ direction: 'incoming', payload: text });
         }
       }
-      fetchLogs();
+      void fetchLogs();
     } catch (err) {
       if (err instanceof Error) {
         addLocalLog({ direction: 'error', payload: `Request Error: ${err.message}` });
