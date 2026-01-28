@@ -986,9 +986,55 @@ const ensureCommittedAndPushed = async (context, notify) => {
 
   return {
     url: context.remoteUrl,
-    branch: `refs/heads/${context.branchName}`,
+    branch: context.branchName,
     revision
   };
+};
+
+const ACP_STOP_REASONS = new Set(["end_turn", "max_tokens", "max_turn_requests", "refusal", "cancelled"]);
+
+const normalizePromptResponseForAcp = (response, contextLabel = "") => {
+  if (!response || typeof response !== "object" || Array.isArray(response)) {
+    return response;
+  }
+  if ("error" in response) {
+    return response;
+  }
+  if (!("result" in response)) {
+    return response;
+  }
+
+  const current = response.result;
+  const coerced = (() => {
+    if (typeof current === "string") {
+      return { stopReason: current };
+    }
+    if (!current || typeof current !== "object" || Array.isArray(current)) {
+      return {};
+    }
+    return current;
+  })();
+
+  if (!coerced.stopReason || typeof coerced.stopReason !== "string") {
+    logWarn(`${contextLabel} session/prompt response missing stopReason; defaulting to end_turn.`);
+    coerced.stopReason = "end_turn";
+  } else if (!ACP_STOP_REASONS.has(coerced.stopReason)) {
+    logWarn(`${contextLabel} session/prompt response has invalid stopReason; defaulting to end_turn.`, {
+      stopReason: coerced.stopReason
+    });
+    coerced.stopReason = "end_turn";
+  }
+  if (
+    "_meta" in coerced
+    && coerced._meta !== null
+    && (typeof coerced._meta !== "object" || Array.isArray(coerced._meta))
+  ) {
+    logWarn(`${contextLabel} session/prompt response has invalid _meta; dropping.`);
+    coerced._meta = null;
+  }
+
+  response.result = coerced;
+  return response;
 };
 
 const attachTargetMeta = (response, target, contextLabel = "") => {
@@ -1424,7 +1470,7 @@ const startAcpRemoteRunServer = () => {
               }
               const forwardMessage = { ...message, params: stripMetaFromParams(message.params) };
               const response = await runtime.sendRequest(forwardMessage, ACP_REMOTE_REQUEST_TIMEOUT_MS);
-              const formatted = normalizeJsonRpcResponse(response, message.id);
+              const formatted = normalizePromptResponseForAcp(normalizeJsonRpcResponse(response, message.id), connectionLabel);
               const sessionId = getSessionIdFromParams(message.params);
               if (!sessionId) {
                 sendRpc(formatted);
