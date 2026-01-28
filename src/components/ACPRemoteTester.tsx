@@ -147,7 +147,9 @@ const sessionMethods = [
 
 const apiUrlOptions = [
   'ws://localhost:3001/acp',
-  'ws://localhost:3001'
+  'ws://localhost:3001',
+  'ws://localhost:3010/acp',
+  'ws://localhost:3010'
 ];
 
 const ACPRemoteTester: React.FC<ACPRemoteTesterProps> = ({ apiUrl, apiKey }) => {

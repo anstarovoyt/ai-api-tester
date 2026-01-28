@@ -6,6 +6,7 @@
   "scripts": {
     "start": "concurrently \"npm run server\" \"npm run client\"",
     "server": "node server.js",
+    "server:remote-run": "node acp-remote-run-server.js",
     "client": "vite",
     "build": "vite build",
     "mcp:cli": "node mcp-cli.js --config mcp-stdio.json"

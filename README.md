@@ -83,3 +83,20 @@ The proxy server forwards requests to `http://localhost:1234` by default, making
 |----------|-------------|
 | `http://localhost:3000` | Frontend application |
 | `http://localhost:3001/` | Proxy server for API requests |
+| `ws://localhost:3010/acp` | ACP Remote Run WebSocket server |
+| `http://localhost:3010/acp/agents` | Lists local ACP agents from `~/.jetbrains/acp.json` |
+
+## ACP Remote Run Server
+
+Run the dedicated remote-run WebSocket server (no HTTP JSON-RPC proxy):
+
+```bash
+npm run server:remote-run
+```
+
+Environment variables:
+
+- `ACP_REMOTE_PORT` (default: `3010`)
+- `ACP_REMOTE_PATH` (default: `/acp`)
+- `ACP_REMOTE_TOKEN` (optional)
+- `ACP_REMOTE_GIT_ROOT` (default: `~/git`)
