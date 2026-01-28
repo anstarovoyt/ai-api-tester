@@ -9,7 +9,7 @@ const { ACPRuntime } = require("./acp-runtime");
 
 const DEFAULT_PATH = "/acp";
 const DEFAULT_TIMEOUT_MS = 60_000;
-const DEFAULT_PORT = 3010;
+const DEFAULT_PORT = 3011;
 
 const ACP_CONFIG = process.env.ACP_CONFIG || path.join(os.homedir(), ".jetbrains", "acp.json");
 const ACP_REMOTE_PATH = process.env.ACP_REMOTE_PATH || DEFAULT_PATH;

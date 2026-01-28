@@ -96,7 +96,7 @@ npm run server:remote-run
 
 Environment variables:
 
-- `ACP_REMOTE_PORT` (default: `3010`)
+- `ACP_REMOTE_PORT` (default: `3011`)
 - `ACP_REMOTE_PATH` (default: `/acp`)
 - `ACP_REMOTE_TOKEN` (optional)
 - `ACP_REMOTE_GIT_ROOT` (default: `~/git`)
