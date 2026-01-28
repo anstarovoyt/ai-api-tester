@@ -9,7 +9,7 @@ const { ACPRuntime } = require("./acp-runtime");
 
 const DEFAULT_PATH = "/acp";
 const DEFAULT_TIMEOUT_MS = 60_000;
-const DEFAULT_PORT = 3011;
+const DEFAULT_PORT = 3010;
 
 const ACP_CONFIG = process.env.ACP_CONFIG || path.join(os.homedir(), ".jetbrains", "acp.json");
 const ACP_REMOTE_PATH = process.env.ACP_REMOTE_PATH || DEFAULT_PATH;
@@ -21,15 +21,30 @@ const ACP_REMOTE_REQUEST_TIMEOUT_MS = Number(process.env.ACP_REMOTE_REQUEST_TIME
 const ACP_REMOTE_GIT_USER_NAME = process.env.ACP_REMOTE_GIT_USER_NAME || "ACP Remote";
 const ACP_REMOTE_GIT_USER_EMAIL = process.env.ACP_REMOTE_GIT_USER_EMAIL || "acp-remote@localhost";
 const ACP_REMOTE_PUSH = !["0", "false", "no"].includes(String(process.env.ACP_REMOTE_PUSH || "true").toLowerCase());
+const ACP_REMOTE_VERBOSE = !["0", "false", "no"].includes(String(process.env.ACP_REMOTE_VERBOSE || "true").toLowerCase());
+const ACP_REMOTE_LOG_PAYLOADS = !["0", "false", "no"].includes(String(process.env.ACP_REMOTE_LOG_PAYLOADS || "false").toLowerCase());
 
 let connectionCounter = 1;
 
-const log = (...args) => {
-  console.log(`[ACP-REMOTE-RUN ${new Date().toISOString()}]`, ...args);
+const logWithLevel = (level, ...args) => {
+  const prefix = `[ACP-REMOTE-RUN ${new Date().toISOString()}]${level ? ` [${level}]` : ""}`;
+  if (level === "ERROR") {
+    console.error(prefix, ...args);
+  } else if (level === "WARN") {
+    console.warn(prefix, ...args);
+  } else {
+    console.log(prefix, ...args);
+  }
 };
 
-const logError = (...args) => {
-  console.error(`[ACP-REMOTE-RUN ${new Date().toISOString()}]`, ...args);
+const log = (...args) => logWithLevel("INFO", ...args);
+const logWarn = (...args) => logWithLevel("WARN", ...args);
+const logError = (...args) => logWithLevel("ERROR", ...args);
+const logDebug = (...args) => {
+  if (!ACP_REMOTE_VERBOSE) {
+    return;
+  }
+  logWithLevel("DEBUG", ...args);
 };
 
 const ensureDir = (dirPath) => {
@@ -138,6 +153,107 @@ const parseJson = (data) => {
 };
 
 const isJsonRpcRequest = (payload) => payload && typeof payload === "object" && !Array.isArray(payload) && typeof payload.method === "string";
+
+const normalizeJsonRpcError = (error) => {
+  if (error && typeof error === "object") {
+    const code = typeof error.code === "number" ? error.code : -32000;
+    const message = typeof error.message === "string" ? error.message : "Unknown error";
+    return { ...error, code, message };
+  }
+  if (typeof error === "string") {
+    return { code: -32000, message: error };
+  }
+  return { code: -32000, message: "Unknown error" };
+};
+
+const normalizeJsonRpcNotification = (payload) => {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    return null;
+  }
+  if (typeof payload.method !== "string") {
+    return null;
+  }
+  const normalized = { ...payload, jsonrpc: payload.jsonrpc || "2.0" };
+  if ("id" in normalized && (normalized.id === undefined || normalized.id === null)) {
+    delete normalized.id;
+  }
+  return normalized;
+};
+
+const normalizeJsonRpcResponse = (response, id) => {
+  if (response && typeof response === "object" && !Array.isArray(response)) {
+    if ("result" in response || "error" in response) {
+      const normalized = { ...response };
+      normalized.jsonrpc = normalized.jsonrpc || "2.0";
+      normalized.id = id;
+      if ("error" in normalized) {
+        normalized.error = normalizeJsonRpcError(normalized.error);
+      }
+      return normalized;
+    }
+    if (response.error && typeof response.error === "object") {
+      return { jsonrpc: "2.0", id, error: normalizeJsonRpcError(response.error) };
+    }
+  }
+  return { jsonrpc: "2.0", id, result: response ?? null };
+};
+
+const describeMessage = (payload) => {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    return { type: Array.isArray(payload) ? "batch" : typeof payload };
+  }
+  const hasMethod = typeof payload.method === "string";
+  const hasId = payload.id !== undefined;
+  const hasResult = "result" in payload;
+  const hasError = "error" in payload;
+  const type = hasMethod
+    ? (hasId ? "request" : "notification")
+    : (hasId && (hasResult || hasError) ? "response" : "unknown");
+  return {
+    type,
+    jsonrpc: payload.jsonrpc,
+    method: hasMethod ? payload.method : undefined,
+    id: hasId ? payload.id : undefined,
+    hasResult,
+    hasError
+  };
+};
+
+const safeStringify = (payload, maxLength = 2_000) => {
+  if (!ACP_REMOTE_LOG_PAYLOADS) {
+    return "";
+  }
+  try {
+    const seen = new WeakSet();
+    const json = JSON.stringify(payload, (key, value) => {
+      if (typeof key === "string") {
+        const lowered = key.toLowerCase();
+        if (lowered.includes("token") || lowered.includes("authorization") || lowered.includes("api_key") || lowered.includes("apikey")) {
+          return "[REDACTED]";
+        }
+      }
+      if (typeof value === "string" && value.length > 500) {
+        return `${value.slice(0, 500)}…(${value.length - 500} more chars)`;
+      }
+      if (typeof value === "object" && value !== null) {
+        if (seen.has(value)) {
+          return "[Circular]";
+        }
+        seen.add(value);
+      }
+      if (typeof value === "bigint") {
+        return value.toString();
+      }
+      return value;
+    });
+    if (json.length <= maxLength) {
+      return json;
+    }
+    return `${json.slice(0, maxLength)}…(${json.length - maxLength} more chars)`;
+  } catch (err) {
+    return `<<unserializable:${err instanceof Error ? err.message : String(err)}>>`;
+  }
+};
 
 const getSessionIdFromParams = (params) => {
   if (!params || typeof params !== "object") {
@@ -422,6 +538,22 @@ const sendJson = (ws, payload) => {
   ws.send(JSON.stringify(payload));
 };
 
+const sendJsonRpc = (ws, payload, contextLabel = "") => {
+  if (Array.isArray(payload)) {
+    logDebug(`${contextLabel} sending batch (${payload.length}).`);
+    for (const item of payload) {
+      sendJsonRpc(ws, item, contextLabel);
+    }
+    return;
+  }
+  if (!payload) {
+    logWarn(`${contextLabel} attempted to send empty payload.`);
+    return;
+  }
+  logDebug(`${contextLabel} ->`, describeMessage(payload), safeStringify(payload));
+  sendJson(ws, payload);
+};
+
 const startAcpRemoteRunServer = () => {
   const expectedPath = normalizePath(ACP_REMOTE_PATH);
   const wss = new WebSocketServer({ noServer: true });
@@ -466,9 +598,11 @@ const startAcpRemoteRunServer = () => {
       return;
     }
     if (!isAuthorized(ACP_REMOTE_TOKEN, req.headers.authorization, url.searchParams.get("token"))) {
+      logError("Upgrade rejected (unauthorized).", { remote: req.socket.remoteAddress || "unknown", path: url.pathname });
       closeSocket(socket, "401 Unauthorized");
       return;
     }
+    log("Upgrade accepted.", { remote: req.socket.remoteAddress || "unknown", path: url.pathname });
     wss.handleUpgrade(req, socket, head, (ws) => wss.emit("connection", ws, req));
   });
 
@@ -477,10 +611,22 @@ const startAcpRemoteRunServer = () => {
     const connectionLabel = `conn:${connectionId}`;
     const url = getRequestUrl(req);
     const queryAgent = url.searchParams.get("agent") || "";
-    const agentInfo = resolveAcpAgentConfig(queryAgent);
-    const runtime = new ACPRuntime(agentInfo.config);
+    const remoteAddress = req.socket.remoteAddress || "unknown";
+    const remotePort = req.socket.remotePort;
+    const remoteLabel = remotePort ? `${remoteAddress}:${remotePort}` : remoteAddress;
+    let agentInfo;
+    let runtime;
+    try {
+      agentInfo = resolveAcpAgentConfig(queryAgent);
+      runtime = new ACPRuntime(agentInfo.config);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to start ACP runtime";
+      logError(`${connectionLabel} failed to configure ACP runtime.`, { remote: remoteLabel, agent: queryAgent || "default", error: message });
+      sendJsonRpc(ws, buildJsonRpcError(null, message, -32000), connectionLabel);
+      ws.close(1011, "ACP runtime error");
+      return;
+    }
     const sessionContexts = new Map();
-    const requestIdToMethod = new Map();
 
     const notify = (stage, message, extra = {}) => {
       const payload = {
@@ -492,14 +638,23 @@ const startAcpRemoteRunServer = () => {
           ...extra
         }
       };
-      sendJson(ws, payload);
+      sendJsonRpc(ws, payload, connectionLabel);
     };
 
-    log(`${connectionLabel} connected.`, { agent: agentInfo.name, path: url.pathname });
+    log(`${connectionLabel} connected.`, { remote: remoteLabel, agent: agentInfo.name, path: url.pathname });
     notify("connection", "Connected", { agent: agentInfo.name });
 
     runtime.on("notification", (payload) => {
-      sendJson(ws, payload);
+      const normalized = normalizeJsonRpcNotification(payload);
+      if (!normalized) {
+        logWarn(`${connectionLabel} skipping non-JSON-RPC notification.`, describeMessage(payload), safeStringify(payload));
+        return;
+      }
+      sendJsonRpc(ws, normalized, connectionLabel);
+    });
+
+    runtime.on("log", (entry) => {
+      logDebug(`${connectionLabel} runtime log.`, entry?.direction, safeStringify(entry?.payload ?? entry));
     });
 
     ws.on("message", (data) => {
@@ -507,24 +662,27 @@ const startAcpRemoteRunServer = () => {
         const parsed = parseJson(data);
         if (!parsed.value) {
           logError(`${connectionLabel} invalid JSON payload.`, parsed.raw.slice(0, 200));
-          sendJson(ws, buildJsonRpcError(null, "Invalid JSON"));
+          sendJsonRpc(ws, buildJsonRpcError(null, "Invalid JSON"), connectionLabel);
           return;
         }
 
         const messages = Array.isArray(parsed.value) ? parsed.value : [parsed.value];
+        logDebug(`${connectionLabel} received ${messages.length} message(s).`);
         for (const message of messages) {
+          logDebug(`${connectionLabel} <-`, describeMessage(message), safeStringify(message));
           if (!isJsonRpcRequest(message)) {
-            sendJson(ws, buildJsonRpcError(message?.id ?? null, "Invalid JSON-RPC payload"));
+            sendJsonRpc(ws, buildJsonRpcError(message?.id ?? null, "Invalid JSON-RPC payload"), connectionLabel);
             continue;
           }
 
           const isNotification = message.id === undefined || message.id === null;
           if (isNotification) {
+            logDebug(`${connectionLabel} notification ->`, message.method);
             runtime.sendNotification(message);
             continue;
           }
 
-          requestIdToMethod.set(message.id, message.method);
+          logDebug(`${connectionLabel} request ->`, message.method, `id=${message.id}`);
 
           if (message.method === "session/new") {
             try {
@@ -533,7 +691,8 @@ const startAcpRemoteRunServer = () => {
               if (!remote?.url || !remote?.revision) {
                 notify("session/new", "Missing _meta.remote (delegating without git prep)", {});
                 const response = await runtime.sendRequest(message, ACP_REMOTE_REQUEST_TIMEOUT_MS);
-                sendJson(ws, response);
+                const formatted = normalizeJsonRpcResponse(response, message.id);
+                sendJsonRpc(ws, formatted, connectionLabel);
                 continue;
               }
 
@@ -557,19 +716,20 @@ const startAcpRemoteRunServer = () => {
               const agentMessage = { ...message, params: agentParams };
 
               const response = await runtime.sendRequest(agentMessage, ACP_REMOTE_REQUEST_TIMEOUT_MS);
-              const sessionId = getSessionIdFromResult(response?.result);
+              const formatted = normalizeJsonRpcResponse(response, message.id);
+              const sessionId = getSessionIdFromResult(formatted?.result);
               if (sessionId) {
                 sessionContexts.set(sessionId, { ...context, runId, remote });
                 notify("session/new", "Session created", { sessionId, cwd: context.workdir });
               } else {
                 notify("session/new", "Session created (unknown sessionId)", { cwd: context.workdir });
               }
-              sendJson(ws, initialTarget ? attachTargetMeta(response, initialTarget) : response);
+              sendJsonRpc(ws, initialTarget ? attachTargetMeta(formatted, initialTarget) : formatted, connectionLabel);
             } catch (err) {
               const messageText = err instanceof Error ? err.message : "Remote session setup failed";
               logError(`${connectionLabel} session/new failed.`, messageText);
               notify("session/new", "Failed", { error: messageText });
-              sendJson(ws, buildJsonRpcError(message.id, messageText, -32000));
+              sendJsonRpc(ws, buildJsonRpcError(message.id, messageText, -32000), connectionLabel);
             }
             continue;
           }
@@ -577,40 +737,42 @@ const startAcpRemoteRunServer = () => {
           if (message.method === "session/prompt") {
             try {
               const response = await runtime.sendRequest(message, ACP_REMOTE_REQUEST_TIMEOUT_MS);
+              const formatted = normalizeJsonRpcResponse(response, message.id);
               const sessionId = getSessionIdFromParams(message.params);
               if (!sessionId) {
-                sendJson(ws, response);
+                sendJsonRpc(ws, formatted, connectionLabel);
                 continue;
               }
               const context = sessionContexts.get(sessionId);
               if (!context) {
-                sendJson(ws, response);
+                sendJsonRpc(ws, formatted, connectionLabel);
                 continue;
               }
               try {
                 notify("git", "Committing and pushing changes", { sessionId });
                 const target = await ensureCommittedAndPushed(context, notify);
                 notify("git", "Target branch ready", { target });
-                sendJson(ws, attachTargetMeta(response, target));
+                sendJsonRpc(ws, attachTargetMeta(formatted, target), connectionLabel);
               } catch (pushErr) {
                 const pushMessage = pushErr instanceof Error ? pushErr.message : "Failed to push changes";
                 logError(`${connectionLabel} push failed.`, pushMessage);
                 notify("git", "Push failed", { error: pushMessage });
-                sendJson(ws, response);
+                sendJsonRpc(ws, formatted, connectionLabel);
               }
             } catch (err) {
               const messageText = err instanceof Error ? err.message : "ACP runtime error";
-              sendJson(ws, buildJsonRpcError(message.id, messageText, -32000));
+              sendJsonRpc(ws, buildJsonRpcError(message.id, messageText, -32000), connectionLabel);
             }
             continue;
           }
 
           try {
             const response = await runtime.sendRequest(message, ACP_REMOTE_REQUEST_TIMEOUT_MS);
-            sendJson(ws, response);
+            const formatted = normalizeJsonRpcResponse(response, message.id);
+            sendJsonRpc(ws, formatted, connectionLabel);
           } catch (err) {
             const messageText = err instanceof Error ? err.message : "ACP runtime error";
-            sendJson(ws, buildJsonRpcError(message.id, messageText, -32000));
+            sendJsonRpc(ws, buildJsonRpcError(message.id, messageText, -32000), connectionLabel);
           }
         }
       })();
