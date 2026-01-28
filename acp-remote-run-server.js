@@ -17,8 +17,22 @@ const ACP_REMOTE_PATH = process.env.ACP_REMOTE_PATH || DEFAULT_PATH;
 const ACP_REMOTE_TOKEN = process.env.ACP_REMOTE_TOKEN || "";
 const ACP_REMOTE_AGENT = process.env.ACP_REMOTE_AGENT || "";
 const ACP_REMOTE_PORT = Number(process.env.ACP_REMOTE_PORT || process.env.PORT || DEFAULT_PORT);
-const ACP_REMOTE_GIT_ROOT = process.env.ACP_REMOTE_GIT_ROOT || path.join(os.homedir(), "git");
-const ACP_REMOTE_GIT_ROOT_SOURCE = process.env.ACP_REMOTE_GIT_ROOT ? "env:ACP_REMOTE_GIT_ROOT" : "default:~/git";
+const resolveHomeDir = (value) => {
+  if (typeof value !== "string") {
+    return "";
+  }
+  if (value === "~") {
+    return os.homedir();
+  }
+  if (value.startsWith("~/")) {
+    return path.join(os.homedir(), value.slice(2));
+  }
+  return value;
+};
+
+const ACP_REMOTE_GIT_ROOT_SOURCE = process.env.ACP_REMOTE_GIT_ROOT || "~/git";
+const ACP_REMOTE_GIT_ROOT_SOURCE_LABEL = process.env.ACP_REMOTE_GIT_ROOT ? "env:ACP_REMOTE_GIT_ROOT" : "default";
+const ACP_REMOTE_GIT_ROOT = path.resolve(resolveHomeDir(ACP_REMOTE_GIT_ROOT_SOURCE));
 const ACP_REMOTE_REQUEST_TIMEOUT_MS = Number(process.env.ACP_REMOTE_REQUEST_TIMEOUT_MS || DEFAULT_TIMEOUT_MS);
 const ACP_REMOTE_GIT_USER_NAME = process.env.ACP_REMOTE_GIT_USER_NAME || "ACP Remote";
 const ACP_REMOTE_GIT_USER_EMAIL = process.env.ACP_REMOTE_GIT_USER_EMAIL || "acp-remote@localhost";
@@ -232,6 +246,23 @@ const normalizePath = (value) => {
 };
 
 const getRequestUrl = (req) => new URL(req.url, `http://${req.headers.host || "localhost"}`);
+
+const redactUrlForLogs = (url) => {
+  if (!url) {
+    return "";
+  }
+  try {
+    const copy = new URL(url.toString());
+    for (const key of ["token", "authorization", "api_key", "apikey"]) {
+      if (copy.searchParams.has(key)) {
+        copy.searchParams.set(key, "[REDACTED]");
+      }
+    }
+    return `${copy.pathname}${copy.search || ""}`;
+  } catch {
+    return String(url);
+  }
+};
 
 const closeSocket = (socket, status, message) => {
   socket.write(`HTTP/1.1 ${status}\r\n\r\n${message || ""}`);
@@ -489,6 +520,22 @@ const redactGitUrl = (value) => {
   return value.replace(/^(https?:\/\/)[^@]+@/i, "$1***@").replace(/^(ssh:\/\/)[^@]+@/i, "$1***@");
 };
 
+const summarizeMetaForLog = (meta) => {
+  if (!meta || typeof meta !== "object" || Array.isArray(meta)) {
+    return { type: Array.isArray(meta) ? "array" : typeof meta };
+  }
+  const summary = { keys: Object.keys(meta).sort() };
+  const remote = meta.remote;
+  if (remote && typeof remote === "object" && !Array.isArray(remote)) {
+    summary.remote = {
+      url: typeof remote.url === "string" ? redactGitUrl(remote.url) : undefined,
+      branch: remote.branch,
+      revision: remote.revision
+    };
+  }
+  return summary;
+};
+
 const ensureRepoWorkdir = async (remote, runId, notify) => {
   const parsed = parseGitRemote(remote.url);
   if (!parsed) {
@@ -499,18 +546,18 @@ const ensureRepoWorkdir = async (remote, runId, notify) => {
   const segments = parsed.repoPath.split("/").filter(Boolean);
   const repoName = segments[segments.length - 1] || "repo";
   const owner = segments[0] || "owner";
-  const preferredRepoDir = path.join(ACP_REMOTE_GIT_ROOT, parsed.host, ...segments);
-  const candidateRepoDirs = [
+  const preferredRepoDir = path.join(ACP_REMOTE_GIT_ROOT, repoName);
+  const candidateRepoDirs = Array.from(new Set([
     preferredRepoDir,
+    path.join(ACP_REMOTE_GIT_ROOT, parsed.host, ...segments),
     path.join(ACP_REMOTE_GIT_ROOT, ...segments),
     path.join(ACP_REMOTE_GIT_ROOT, owner, repoName),
-    path.join(ACP_REMOTE_GIT_ROOT, repoName),
     path.join(ACP_REMOTE_GIT_ROOT, `${owner}-${repoName}`),
     path.join(ACP_REMOTE_GIT_ROOT, parsed.host, repoName)
-  ];
+  ]));
 
-  let repoDir = preferredRepoDir;
-  let repoDirReason = "preferred path (no existing match checked yet)";
+  let repoDir = "";
+  let repoDirReason = "";
   const candidateChecks = [];
   for (const candidate of candidateRepoDirs) {
     const hasGit = fs.existsSync(path.join(candidate, ".git"));
@@ -542,8 +589,8 @@ const ensureRepoWorkdir = async (remote, runId, notify) => {
     }
   }
 
-  if (repoDir === preferredRepoDir && fs.existsSync(ACP_REMOTE_GIT_ROOT)) {
-    repoDirReason = "preferred path (no match in candidates; scanning git root)";
+  if (!repoDir && fs.existsSync(ACP_REMOTE_GIT_ROOT)) {
+    repoDirReason = "no match in candidates; scanning git root";
     const scanned = [];
     try {
       const dirents = fs.readdirSync(ACP_REMOTE_GIT_ROOT, { withFileTypes: true });
@@ -576,6 +623,15 @@ const ensureRepoWorkdir = async (remote, runId, notify) => {
     }
   }
 
+  if (!repoDir) {
+    const cloneTarget = candidateRepoDirs.find((candidate) => !fs.existsSync(candidate));
+    if (!cloneTarget) {
+      throw new Error(`No available directory under gitRoot to clone repo: ${remoteUrlForLogs}`);
+    }
+    repoDir = cloneTarget;
+    repoDirReason = `cloning into ${cloneTarget}`;
+  }
+
   const worktreesRoot = path.join(ACP_REMOTE_GIT_ROOT, ".acp-remote-worktrees", parsed.host, ...parsed.repoPath.split("/").filter(Boolean));
   const workdir = path.join(worktreesRoot, runId);
   const branchName = `agent/changes-${sanitizeBranchComponent(runId).slice(0, 24)}`;
@@ -583,11 +639,14 @@ const ensureRepoWorkdir = async (remote, runId, notify) => {
   log("Git workdir selection.", {
     gitRoot: ACP_REMOTE_GIT_ROOT,
     gitRootSource: ACP_REMOTE_GIT_ROOT_SOURCE,
+    gitRootSourceLabel: ACP_REMOTE_GIT_ROOT_SOURCE_LABEL,
     preferredRepoDir,
     repoDir,
     repoDirReason,
     worktreesRoot,
     host: parsed.host,
+    owner,
+    repoName,
     repoPath: parsed.repoPath,
     candidatesChecked: candidateChecks.length
   });
@@ -598,7 +657,15 @@ const ensureRepoWorkdir = async (remote, runId, notify) => {
       candidates: candidateChecks
     });
   }
-  notify("git/dir", "Resolved git directories", { gitRoot: ACP_REMOTE_GIT_ROOT, repoDir, repoDirReason, worktreesRoot });
+  notify("git/dir", "Resolved git directories", {
+    gitRoot: ACP_REMOTE_GIT_ROOT,
+    gitRootSource: ACP_REMOTE_GIT_ROOT_SOURCE,
+    gitRootSourceLabel: ACP_REMOTE_GIT_ROOT_SOURCE_LABEL,
+    repoName,
+    repoDir,
+    repoDirReason,
+    worktreesRoot
+  });
 
   const ref = remote.revision || (remote.branch ? `origin/${remote.branch}` : "");
   if (!ref) {
@@ -693,7 +760,7 @@ const ensureCommittedAndPushed = async (context, notify) => {
   };
 };
 
-const attachTargetMeta = (response, target) => {
+const attachTargetMeta = (response, target, contextLabel = "") => {
   if (!response || typeof response !== "object") {
     return response;
   }
@@ -701,6 +768,11 @@ const attachTargetMeta = (response, target) => {
   if (!result || typeof result !== "object") {
     return response;
   }
+  logDebug(`${contextLabel} attaching target to response result._meta.`, {
+    url: redactGitUrl(target?.url),
+    branch: target?.branch,
+    revision: target?.revision
+  });
   result._meta = { ...(result._meta || {}), target };
   return response;
 };
@@ -742,9 +814,30 @@ const sendJsonRpc = (ws, payload, contextLabel = "") => {
 const startAcpRemoteRunServer = () => {
   const expectedPath = normalizePath(ACP_REMOTE_PATH);
   const wss = new WebSocketServer({ noServer: true });
-  log("Git root configured.", { gitRoot: ACP_REMOTE_GIT_ROOT, source: ACP_REMOTE_GIT_ROOT_SOURCE });
+  log("Git root configured.", {
+    gitRoot: ACP_REMOTE_GIT_ROOT,
+    gitRootSource: ACP_REMOTE_GIT_ROOT_SOURCE,
+    gitRootSourceLabel: ACP_REMOTE_GIT_ROOT_SOURCE_LABEL
+  });
 
   const httpServer = http.createServer((req, res) => {
+    const startedAt = Date.now();
+    const url = getRequestUrl(req);
+    const remoteAddress = req.socket.remoteAddress || "unknown";
+    const remotePort = req.socket.remotePort;
+    const remoteLabel = remotePort ? `${remoteAddress}:${remotePort}` : remoteAddress;
+
+    res.on("finish", () => {
+      const durationMs = Date.now() - startedAt;
+      logDebug("HTTP request processed.", {
+        remote: remoteLabel,
+        method: req.method,
+        path: redactUrlForLogs(url),
+        statusCode: res.statusCode,
+        durationMs
+      });
+    });
+
     res.setHeader("Access-Control-Allow-Origin", "*");
     res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
     res.setHeader("Access-Control-Allow-Headers", "Authorization,Content-Type");
@@ -755,8 +848,8 @@ const startAcpRemoteRunServer = () => {
       return;
     }
 
-    const url = getRequestUrl(req);
     if (req.method === "GET" && normalizePath(url.pathname) === "/acp/agents") {
+      logDebug("HTTP route matched.", { route: "GET /acp/agents", remote: remoteLabel });
       const agents = getAcpAgents();
       if (!agents) {
         res.writeHead(404, { "Content-Type": "application/json" });
@@ -769,6 +862,7 @@ const startAcpRemoteRunServer = () => {
     }
 
     if (req.method === "GET" && normalizePath(url.pathname) === "/health") {
+      logDebug("HTTP route matched.", { route: "GET /health", remote: remoteLabel });
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ ok: true }));
       return;
@@ -813,6 +907,7 @@ const startAcpRemoteRunServer = () => {
       return;
     }
     const sessionContexts = new Map();
+    let hasAnySession = false;
 
     const notify = (stage, message, extra = {}) => {
       const payload = {
@@ -865,7 +960,17 @@ const startAcpRemoteRunServer = () => {
         const messages = Array.isArray(parsed.value) ? parsed.value : [parsed.value];
         logDebug(`${connectionLabel} received ${messages.length} message(s).`);
         for (const message of messages) {
+          const startedAt = Date.now();
           logDebug(`${connectionLabel} <-`, describeMessage(message), safeStringify(message));
+          const hasMeta = Boolean(
+            message?.params
+            && typeof message.params === "object"
+            && !Array.isArray(message.params)
+            && "_meta" in message.params
+          );
+          if (hasMeta) {
+            logDebug(`${connectionLabel} received params._meta.`, summarizeMetaForLog(message.params._meta));
+          }
           if (!isJsonRpcRequest(message)) {
             sendJsonRpc(ws, buildJsonRpcError(message?.id ?? null, "Invalid JSON-RPC payload"), connectionLabel);
             continue;
@@ -873,32 +978,75 @@ const startAcpRemoteRunServer = () => {
 
           const isNotification = message.id === undefined || message.id === null;
           if (isNotification) {
-            logDebug(`${connectionLabel} notification ->`, message.method);
+            logDebug(`${connectionLabel} processing notification.`, { method: message.method });
+            if (!runtime.started) {
+              logDebug(`${connectionLabel} starting ACP runtime for notification.`, {
+                agent: agentInfo.name,
+                cwd: runtime.spawnCwd || process.cwd()
+              });
+            }
             runtime.sendNotification(message);
+            logDebug(`${connectionLabel} notification forwarded to runtime.`, { method: message.method, durationMs: Date.now() - startedAt });
             continue;
           }
 
-          logDebug(`${connectionLabel} request ->`, message.method, `id=${message.id}`);
+          logDebug(`${connectionLabel} processing request.`, { method: message.method, id: message.id });
+          if (hasMeta && message.method !== "session/new") {
+            logDebug(`${connectionLabel} passing params._meta through unchanged.`, { method: message.method });
+          }
 
           if (message.method === "session/new") {
             try {
               const params = message.params && typeof message.params === "object" ? message.params : {};
-              const remote = params?._meta?.remote;
+              const meta = params?._meta;
+              const remote = meta?.remote;
+              logDebug(`${connectionLabel} session/new extracting _meta.remote.`, {
+                meta: summarizeMetaForLog(meta),
+                hasRemote: Boolean(remote),
+                url: redactGitUrl(remote?.url),
+                branch: remote?.branch,
+                revision: remote?.revision
+              });
               if (!remote?.url || !remote?.revision) {
                 notify("session/new", "Missing _meta.remote (delegating without git prep)", {});
                 if (params.cwd) {
-                  runtime.setSpawnCwd(params.cwd);
+                  if (runtime.started) {
+                    logWarn(`${connectionLabel} runtime started before session/new; restarting to apply cwd.`, {
+                      previousCwd: runtime.spawnCwd || process.cwd(),
+                      requestedCwd: params.cwd
+                    });
+                    runtime.stop();
+                  }
+                  const applied = runtime.setSpawnCwd(params.cwd);
+                  log(`${connectionLabel} agent cwd selected.`, {
+                    cwd: params.cwd,
+                    gitRoot: ACP_REMOTE_GIT_ROOT,
+                    gitRootSource: ACP_REMOTE_GIT_ROOT_SOURCE,
+                    gitRootSourceLabel: ACP_REMOTE_GIT_ROOT_SOURCE_LABEL,
+                    applied
+                  });
+                }
+                logDebug(`${connectionLabel} session/new delegating request to runtime unchanged (no git prep).`, { id: message.id });
+                if (!runtime.started) {
+                  logDebug(`${connectionLabel} starting ACP runtime for session/new (delegated).`, {
+                    agent: agentInfo.name,
+                    cwd: runtime.spawnCwd || process.cwd()
+                  });
                 }
                 const response = await runtime.sendRequest(message, ACP_REMOTE_REQUEST_TIMEOUT_MS);
                 const formatted = normalizeJsonRpcResponse(response, message.id);
                 sendJsonRpc(ws, formatted, connectionLabel);
+                hasAnySession = true;
+                logDebug(`${connectionLabel} session/new completed (delegated).`, { id: message.id, durationMs: Date.now() - startedAt });
                 continue;
               }
 
               const runId = generateRunId();
               notify("session/new", "Preparing git workspace", { url: remote.url, branch: remote.branch, revision: remote.revision, runId });
+              logDebug(`${connectionLabel} session/new starting git workspace prep.`, { runId, url: redactGitUrl(remote.url), revision: remote.revision });
 
               const context = await ensureRepoWorkdir(remote, runId, notify);
+              logDebug(`${connectionLabel} session/new git workspace ready.`, { runId, workdir: context.workdir, repoDir: context.repoDir, branchName: context.branchName });
               let initialTarget = null;
               try {
                 notify("git", "Ensuring target branch exists", { branch: context.branchName });
@@ -910,10 +1058,35 @@ const startAcpRemoteRunServer = () => {
                 notify("git", "Initial push failed", { error: pushMessage });
               }
               notify("session/new", "Starting ACP session", { cwd: context.workdir });
-              runtime.setSpawnCwd(context.workdir);
+              if (runtime.started) {
+                logWarn(`${connectionLabel} runtime started before session/new; restarting to apply git workdir.`, {
+                  previousCwd: runtime.spawnCwd || process.cwd(),
+                  requestedCwd: context.workdir
+                });
+                runtime.stop();
+              }
+              const applied = runtime.setSpawnCwd(context.workdir);
+              log(`${connectionLabel} agent cwd selected.`, {
+                cwd: context.workdir,
+                gitRoot: ACP_REMOTE_GIT_ROOT,
+                gitRootSource: ACP_REMOTE_GIT_ROOT_SOURCE,
+                gitRootSourceLabel: ACP_REMOTE_GIT_ROOT_SOURCE_LABEL,
+                applied
+              });
 
               const agentParams = { ...params, cwd: context.workdir };
               const agentMessage = { ...message, params: agentParams };
+              logDebug(`${connectionLabel} session/new forwarding request to runtime with updated cwd.`, {
+                id: message.id,
+                cwd: context.workdir,
+                meta: summarizeMetaForLog(agentParams?._meta)
+              });
+              if (!runtime.started) {
+                logDebug(`${connectionLabel} starting ACP runtime for session/new.`, {
+                  agent: agentInfo.name,
+                  cwd: runtime.spawnCwd || process.cwd()
+                });
+              }
 
               const response = await runtime.sendRequest(agentMessage, ACP_REMOTE_REQUEST_TIMEOUT_MS);
               const formatted = normalizeJsonRpcResponse(response, message.id);
@@ -924,55 +1097,79 @@ const startAcpRemoteRunServer = () => {
               } else {
                 notify("session/new", "Session created (unknown sessionId)", { cwd: context.workdir });
               }
-              sendJsonRpc(ws, initialTarget ? attachTargetMeta(formatted, initialTarget) : formatted, connectionLabel);
+              sendJsonRpc(ws, initialTarget ? attachTargetMeta(formatted, initialTarget, connectionLabel) : formatted, connectionLabel);
+              hasAnySession = true;
+              logDebug(`${connectionLabel} session/new completed.`, { id: message.id, sessionId: sessionId || null, durationMs: Date.now() - startedAt });
             } catch (err) {
               const messageText = err instanceof Error ? err.message : "Remote session setup failed";
               logError(`${connectionLabel} session/new failed.`, messageText);
               notify("session/new", "Failed", { error: messageText });
               sendJsonRpc(ws, buildJsonRpcError(message.id, messageText, -32000), connectionLabel);
+              logDebug(`${connectionLabel} session/new error returned.`, { id: message.id, durationMs: Date.now() - startedAt });
             }
             continue;
           }
 
           if (message.method === "session/prompt") {
             try {
+              logDebug(`${connectionLabel} session/prompt forwarding request to runtime.`, { id: message.id });
+              if (!runtime.started) {
+                logDebug(`${connectionLabel} starting ACP runtime for session/prompt.`, {
+                  agent: agentInfo.name,
+                  cwd: runtime.spawnCwd || process.cwd()
+                });
+              }
               const response = await runtime.sendRequest(message, ACP_REMOTE_REQUEST_TIMEOUT_MS);
               const formatted = normalizeJsonRpcResponse(response, message.id);
               const sessionId = getSessionIdFromParams(message.params);
               if (!sessionId) {
                 sendJsonRpc(ws, formatted, connectionLabel);
+                logDebug(`${connectionLabel} session/prompt completed (no sessionId).`, { id: message.id, durationMs: Date.now() - startedAt });
                 continue;
               }
               const context = sessionContexts.get(sessionId);
               if (!context) {
                 sendJsonRpc(ws, formatted, connectionLabel);
+                logDebug(`${connectionLabel} session/prompt completed (unknown session context).`, { id: message.id, sessionId, durationMs: Date.now() - startedAt });
                 continue;
               }
               try {
                 notify("git", "Committing and pushing changes", { sessionId });
                 const target = await ensureCommittedAndPushed(context, notify);
                 notify("git", "Target branch ready", { target });
-                sendJsonRpc(ws, attachTargetMeta(formatted, target), connectionLabel);
+                sendJsonRpc(ws, attachTargetMeta(formatted, target, connectionLabel), connectionLabel);
+                logDebug(`${connectionLabel} session/prompt completed (pushed).`, { id: message.id, sessionId, durationMs: Date.now() - startedAt });
               } catch (pushErr) {
                 const pushMessage = pushErr instanceof Error ? pushErr.message : "Failed to push changes";
                 logError(`${connectionLabel} push failed.`, pushMessage);
                 notify("git", "Push failed", { error: pushMessage });
                 sendJsonRpc(ws, formatted, connectionLabel);
+                logDebug(`${connectionLabel} session/prompt completed (push failed).`, { id: message.id, sessionId, durationMs: Date.now() - startedAt });
               }
             } catch (err) {
               const messageText = err instanceof Error ? err.message : "ACP runtime error";
               sendJsonRpc(ws, buildJsonRpcError(message.id, messageText, -32000), connectionLabel);
+              logDebug(`${connectionLabel} session/prompt error returned.`, { id: message.id, durationMs: Date.now() - startedAt });
             }
             continue;
           }
 
           try {
+            logDebug(`${connectionLabel} forwarding request to runtime.`, { method: message.method, id: message.id });
+            if (!runtime.started) {
+              logDebug(`${connectionLabel} starting ACP runtime for request.`, {
+                agent: agentInfo.name,
+                cwd: runtime.spawnCwd || process.cwd()
+              });
+            }
             const response = await runtime.sendRequest(message, ACP_REMOTE_REQUEST_TIMEOUT_MS);
             const formatted = normalizeJsonRpcResponse(response, message.id);
             sendJsonRpc(ws, formatted, connectionLabel);
+            logDebug(`${connectionLabel} request completed.`, { method: message.method, id: message.id, durationMs: Date.now() - startedAt });
           } catch (err) {
             const messageText = err instanceof Error ? err.message : "ACP runtime error";
             sendJsonRpc(ws, buildJsonRpcError(message.id, messageText, -32000), connectionLabel);
+            logDebug(`${connectionLabel} request error returned.`, { method: message.method, id: message.id, durationMs: Date.now() - startedAt });
           }
         }
       })();
@@ -1006,7 +1203,6 @@ const startAcpRemoteRunServer = () => {
       cleanup();
     });
 
-    runtime.start();
   });
 
   httpServer.listen(ACP_REMOTE_PORT, () => {
