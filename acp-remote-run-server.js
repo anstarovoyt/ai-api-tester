@@ -17,6 +17,9 @@ const ACP_REMOTE_PATH = process.env.ACP_REMOTE_PATH || DEFAULT_PATH;
 const ACP_REMOTE_TOKEN = process.env.ACP_REMOTE_TOKEN || "";
 const ACP_REMOTE_AGENT = process.env.ACP_REMOTE_AGENT || "";
 const ACP_REMOTE_PORT = Number(process.env.ACP_REMOTE_PORT || process.env.PORT || DEFAULT_PORT);
+const ACP_REMOTE_BIND_HOST = process.env.ACP_REMOTE_BIND_HOST || "";
+const ACP_REMOTE_ADVERTISE_HOST = process.env.ACP_REMOTE_ADVERTISE_HOST || (ACP_REMOTE_BIND_HOST && !["0.0.0.0", "::"].includes(ACP_REMOTE_BIND_HOST) ? ACP_REMOTE_BIND_HOST : "localhost");
+const ACP_REMOTE_ADVERTISE_PROTOCOL = process.env.ACP_REMOTE_ADVERTISE_PROTOCOL || "http";
 const resolveHomeDir = (value) => {
   if (typeof value !== "string") {
     return "";
@@ -39,10 +42,20 @@ const ACP_REMOTE_GIT_USER_EMAIL = process.env.ACP_REMOTE_GIT_USER_EMAIL || "acp-
 const ACP_REMOTE_PUSH = !["0", "false", "no"].includes(String(process.env.ACP_REMOTE_PUSH || "true").toLowerCase());
 const ACP_REMOTE_VERBOSE = !["0", "false", "no"].includes(String(process.env.ACP_REMOTE_VERBOSE || "true").toLowerCase());
 const ACP_REMOTE_LOG_PAYLOADS = !["0", "false", "no"].includes(String(process.env.ACP_REMOTE_LOG_PAYLOADS || "false").toLowerCase());
+const ACP_REMOTE_LOG_RPC_PAYLOADS = !["0", "false", "no"].includes(
+  String(process.env.ACP_REMOTE_LOG_RPC_PAYLOADS || "true").toLowerCase()
+);
+const ACP_REMOTE_LOG_RPC_NOTIFICATION_PAYLOADS = !["0", "false", "no"].includes(
+  String(process.env.ACP_REMOTE_LOG_RPC_NOTIFICATION_PAYLOADS || "false").toLowerCase()
+);
 const ACP_REMOTE_COALESCE_SESSION_UPDATES = !["0", "false", "no"].includes(
   String(process.env.ACP_REMOTE_COALESCE_SESSION_UPDATES || "true").toLowerCase()
 );
 const ACP_REMOTE_SESSION_UPDATE_LOG_FLUSH_MS = Number(process.env.ACP_REMOTE_SESSION_UPDATE_LOG_FLUSH_MS || 2_000);
+const ACP_REMOTE_LOG_MAX_CHARS = Number(process.env.ACP_REMOTE_LOG_MAX_CHARS || 50_000);
+const ACP_REMOTE_LOG_MAX_STRING_CHARS = Number(process.env.ACP_REMOTE_LOG_MAX_STRING_CHARS || 4_000);
+const ACP_REMOTE_COLOR = !["0", "false", "no"].includes(String(process.env.ACP_REMOTE_COLOR || "true").toLowerCase());
+const USE_COLOR = Boolean(ACP_REMOTE_COLOR && process.stdout.isTTY && !process.env.NO_COLOR);
 
 let connectionCounter = 1;
 
@@ -61,26 +74,91 @@ try {
   logFileStream = null;
 }
 
-const writeLogLineToFile = (line) => {
+const stripAnsi = (value) => String(value || "").replace(/\x1b\[[0-9;]*m/g, "");
+
+const writeLogTextToFile = (text) => {
   if (!logFileStream) {
     return;
   }
   try {
-    logFileStream.write(`${line}\n`);
+    const cleaned = stripAnsi(text);
+    const lines = cleaned.split(/\r?\n/);
+    for (const line of lines) {
+      logFileStream.write(`${line}\n`);
+    }
   } catch {
     // ignore file logging failures
   }
 };
 
+const ansi = {
+  reset: "\x1b[0m",
+  dim: "\x1b[2m",
+  bold: "\x1b[1m",
+  red: "\x1b[31m",
+  green: "\x1b[32m",
+  yellow: "\x1b[33m",
+  blue: "\x1b[34m",
+  magenta: "\x1b[35m",
+  cyan: "\x1b[36m",
+  gray: "\x1b[90m"
+};
+
+const color = (code, text) => (USE_COLOR ? `${code}${text}${ansi.reset}` : String(text));
+const dim = (text) => color(ansi.dim, text);
+const bold = (text) => color(ansi.bold, text);
+
+const inspectForLog = (value, options = {}) => {
+  if (typeof value === "string") {
+    return value;
+  }
+  return util.inspect(value, {
+    depth: options.depth ?? 6,
+    colors: Boolean(options.colors),
+    breakLength: 120,
+    maxArrayLength: 50,
+    maxStringLength: ACP_REMOTE_LOG_MAX_STRING_CHARS
+  });
+};
+
+const prefixLines = (prefix, text) => {
+  const raw = String(text ?? "");
+  const lines = raw.split(/\r?\n/);
+  return lines.map((line) => `${prefix} ${line}`).join("\n");
+};
+
+const formatPrefix = (level, timestamp, { colors }) => {
+  const base = `[ACP-REMOTE-RUN ${timestamp}]`;
+  const bracketedLevel = level ? `[${level}]` : "";
+  if (!colors) {
+    return `${base}${bracketedLevel ? ` ${bracketedLevel}` : ""}`;
+  }
+  const levelColored = (() => {
+    if (level === "ERROR") return color(ansi.red, bracketedLevel);
+    if (level === "WARN") return color(ansi.yellow, bracketedLevel);
+    if (level === "DEBUG") return color(ansi.magenta, bracketedLevel);
+    return color(ansi.green, bracketedLevel || "[INFO]");
+  })();
+  return `${dim(base)} ${levelColored}`;
+};
+
 const logWithLevel = (level, ...args) => {
-  const prefix = `[ACP-REMOTE-RUN ${new Date().toISOString()}]${level ? ` [${level}]` : ""}`;
-  writeLogLineToFile(util.format(prefix, ...args));
+  const timestamp = new Date().toISOString();
+  const prefixPlain = formatPrefix(level, timestamp, { colors: false });
+  const prefixConsole = formatPrefix(level, timestamp, { colors: true });
+  const messagePlain = args.map((arg) => inspectForLog(arg, { colors: false })).join(" ");
+  const messageConsole = args.map((arg) => inspectForLog(arg, { colors: USE_COLOR })).join(" ");
+
+  const outFile = prefixLines(prefixPlain, messagePlain);
+  const outConsole = prefixLines(prefixConsole, messageConsole);
+  writeLogTextToFile(outFile);
+
   if (level === "ERROR") {
-    console.error(prefix, ...args);
+    console.error(outConsole);
   } else if (level === "WARN") {
-    console.warn(prefix, ...args);
+    console.warn(outConsole);
   } else {
-    console.log(prefix, ...args);
+    console.log(outConsole);
   }
 };
 
@@ -94,11 +172,152 @@ const logDebug = (...args) => {
   logWithLevel("DEBUG", ...args);
 };
 
+const redactForLog = (payload) => {
+  const seen = new WeakSet();
+  const redact = (key, value) => {
+    if (typeof key === "string") {
+      const lowered = key.toLowerCase();
+      if (
+        lowered.includes("token")
+        || lowered.includes("authorization")
+        || lowered.includes("api_key")
+        || lowered.includes("apikey")
+        || lowered.includes("password")
+        || lowered.includes("secret")
+      ) {
+        return "[REDACTED]";
+      }
+    }
+    if (typeof value === "string" && value.length > ACP_REMOTE_LOG_MAX_STRING_CHARS) {
+      return `${value.slice(0, ACP_REMOTE_LOG_MAX_STRING_CHARS)}…(${value.length - ACP_REMOTE_LOG_MAX_STRING_CHARS} more chars)`;
+    }
+    if (typeof value === "object" && value !== null) {
+      if (seen.has(value)) {
+        return "[Circular]";
+      }
+      seen.add(value);
+    }
+    if (typeof value === "bigint") {
+      return value.toString();
+    }
+    return value;
+  };
+
+  try {
+    return JSON.parse(JSON.stringify(payload, redact));
+  } catch {
+    return payload;
+  }
+};
+
+const safePrettyJsonForLog = (payload) => {
+  try {
+    const json = JSON.stringify(redactForLog(payload), null, 2);
+    if (json.length <= ACP_REMOTE_LOG_MAX_CHARS) {
+      return json;
+    }
+    return `${json.slice(0, ACP_REMOTE_LOG_MAX_CHARS)}\n…(${json.length - ACP_REMOTE_LOG_MAX_CHARS} more chars)`;
+  } catch (err) {
+    return `<<unserializable:${err instanceof Error ? err.message : String(err)}>>`;
+  }
+};
+
+const isSessionUpdateNotification = (payload) => (
+  payload
+  && typeof payload === "object"
+  && !Array.isArray(payload)
+  && payload.method === "session/update"
+  && (payload.id === undefined || payload.id === null)
+);
+
+const describeRpcForLog = (payload) => {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    return { type: Array.isArray(payload) ? "batch" : typeof payload };
+  }
+  const hasMethod = typeof payload.method === "string";
+  const hasId = payload.id !== undefined;
+  const hasResult = "result" in payload;
+  const hasError = "error" in payload;
+  const type = hasMethod
+    ? (hasId ? "request" : "notification")
+    : (hasId && (hasResult || hasError) ? "response" : "unknown");
+  return {
+    type,
+    method: hasMethod ? payload.method : undefined,
+    id: hasId ? payload.id : undefined
+  };
+};
+
+const formatRpcHeader = ({ contextLabel = "", direction, payload, methodHint }) => {
+  const desc = describeRpcForLog(payload);
+  const typeColored = (() => {
+    const label = desc.type || "unknown";
+    if (label === "request") return color(ansi.blue, label);
+    if (label === "response") return color(ansi.green, label);
+    if (label === "notification") return color(ansi.yellow, label);
+    return color(ansi.gray, label);
+  })();
+  const arrow = direction === "<-" ? color(ansi.cyan, "<-") : color(ansi.magenta, "->");
+  const method = desc.method || methodHint || "";
+  const methodPart = method ? ` ${bold(method)}` : "";
+  const idPart = desc.id !== undefined ? ` ${dim(`id=${desc.id}`)}` : "";
+  const ctx = contextLabel ? `${bold(contextLabel)} ` : "";
+  return `${ctx}${arrow} ${typeColored}${methodPart}${idPart}`;
+};
+
+const logRpc = ({ level, contextLabel, direction, payload, methodHint }) => {
+  if (level === "DEBUG" && !ACP_REMOTE_VERBOSE) {
+    return;
+  }
+  const header = formatRpcHeader({ contextLabel, direction, payload, methodHint });
+  if (isSessionUpdateNotification(payload) && sessionUpdateLogCoalescer.bump(contextLabel, direction)) {
+    return;
+  }
+  const lines = [header];
+  const desc = describeRpcForLog(payload);
+  const shouldIncludePayload = ACP_REMOTE_LOG_RPC_PAYLOADS && (
+    desc.type === "request"
+    || desc.type === "response"
+    || (ACP_REMOTE_LOG_RPC_NOTIFICATION_PAYLOADS && desc.type === "notification")
+  );
+  if (shouldIncludePayload && !isSessionUpdateNotification(payload)) {
+    const body = safePrettyJsonForLog(payload);
+    for (const line of body.split(/\r?\n/)) {
+      lines.push(dim(`  ${line}`));
+    }
+  }
+  logWithLevel(level, lines.join("\n"));
+};
+
+const extractSessionNotFoundId = (error) => {
+  if (!error || typeof error !== "object") {
+    return "";
+  }
+  const data = error.data;
+  if (typeof data === "string") {
+    try {
+      const parsed = JSON.parse(data);
+      const message = typeof parsed?.error === "string" ? parsed.error : "";
+      const match = message.match(/Session not found:\s*([^\s]+)/);
+      return match ? match[1] : "";
+    } catch {
+      const match = data.match(/Session not found:\s*([^\s]+)/);
+      return match ? match[1] : "";
+    }
+  }
+  if (data && typeof data === "object") {
+    const message = typeof data.error === "string" ? data.error : "";
+    const match = message.match(/Session not found:\s*([^\s]+)/);
+    return match ? match[1] : "";
+  }
+  return "";
+};
+
 const sessionUpdateLogCoalescer = (() => {
   const pending = new Map();
   let timer = null;
 
-  const canCoalesce = () => ACP_REMOTE_VERBOSE && ACP_REMOTE_COALESCE_SESSION_UPDATES && !ACP_REMOTE_LOG_PAYLOADS;
+  const canCoalesce = () => ACP_REMOTE_VERBOSE && ACP_REMOTE_COALESCE_SESSION_UPDATES;
 
   const scheduleFlush = () => {
     if (timer || !canCoalesce()) {
@@ -536,6 +755,18 @@ const summarizeMetaForLog = (meta) => {
   return summary;
 };
 
+const stripMetaFromParams = (params) => {
+  if (!params || typeof params !== "object" || Array.isArray(params)) {
+    return {};
+  }
+  if (!("_meta" in params)) {
+    return params;
+  }
+  const copy = { ...params };
+  delete copy._meta;
+  return copy;
+};
+
 const ensureRepoWorkdir = async (remote, runId, notify) => {
   const parsed = parseGitRemote(remote.url);
   if (!parsed) {
@@ -632,7 +863,7 @@ const ensureRepoWorkdir = async (remote, runId, notify) => {
     repoDirReason = `cloning into ${cloneTarget}`;
   }
 
-  const worktreesRoot = path.join(ACP_REMOTE_GIT_ROOT, ".acp-remote-worktrees", parsed.host, ...parsed.repoPath.split("/").filter(Boolean));
+  const worktreesRoot = path.join(ACP_REMOTE_GIT_ROOT, ".acp-remote-worktrees", repoName);
   const workdir = path.join(worktreesRoot, runId);
   const branchName = `agent/changes-${sanitizeBranchComponent(runId).slice(0, 24)}`;
 
@@ -784,11 +1015,11 @@ const sendJson = (ws, payload) => {
   ws.send(JSON.stringify(payload));
 };
 
-const sendJsonRpc = (ws, payload, contextLabel = "") => {
+const sendJsonRpc = (ws, payload, contextLabel = "", requestMethodById) => {
   if (Array.isArray(payload)) {
     logDebug(`${contextLabel} sending batch (${payload.length}).`);
     for (const item of payload) {
-      sendJsonRpc(ws, item, contextLabel);
+      sendJsonRpc(ws, item, contextLabel, requestMethodById);
     }
     return;
   }
@@ -796,19 +1027,28 @@ const sendJsonRpc = (ws, payload, contextLabel = "") => {
     logWarn(`${contextLabel} attempted to send empty payload.`);
     return;
   }
-  const shouldCoalesceSessionUpdate = (
-    payload
+  const desc = describeRpcForLog(payload);
+  const methodHint = (
+    desc.type === "response"
+    && requestMethodById
+    && payload
     && typeof payload === "object"
     && !Array.isArray(payload)
-    && payload.method === "session/update"
-    && !("id" in payload)
-  );
-  if (shouldCoalesceSessionUpdate && sessionUpdateLogCoalescer.bump(contextLabel, "->")) {
-    sendJson(ws, payload);
-    return;
-  }
-  logDebug(`${contextLabel} ->`, describeMessage(payload), safeStringify(payload));
+    && "id" in payload
+  ) ? requestMethodById.get(payload.id) : undefined;
+  const level = desc.type === "response" ? "INFO" : "DEBUG";
+  logRpc({ level, contextLabel, direction: "->", payload, methodHint });
   sendJson(ws, payload);
+  if (
+    desc.type === "response"
+    && requestMethodById
+    && payload
+    && typeof payload === "object"
+    && !Array.isArray(payload)
+    && "id" in payload
+  ) {
+    requestMethodById.delete(payload.id);
+  }
 };
 
 const startAcpRemoteRunServer = () => {
@@ -907,7 +1147,10 @@ const startAcpRemoteRunServer = () => {
       return;
     }
     const sessionContexts = new Map();
+    const requestMethodById = new Map();
     let hasAnySession = false;
+
+    const sendRpc = (payload) => sendJsonRpc(ws, payload, connectionLabel, requestMethodById);
 
     const notify = (stage, message, extra = {}) => {
       const payload = {
@@ -919,7 +1162,7 @@ const startAcpRemoteRunServer = () => {
           ...extra
         }
       };
-      sendJsonRpc(ws, payload, connectionLabel);
+      sendRpc(payload);
     };
 
     log(`${connectionLabel} connected.`, { remote: remoteLabel, agent: agentInfo.name, path: url.pathname });
@@ -931,7 +1174,7 @@ const startAcpRemoteRunServer = () => {
         logWarn(`${connectionLabel} skipping non-JSON-RPC notification.`, describeMessage(payload), safeStringify(payload));
         return;
       }
-      sendJsonRpc(ws, normalized, connectionLabel);
+      sendRpc(normalized);
     });
 
     runtime.on("log", (entry) => {
@@ -945,7 +1188,51 @@ const startAcpRemoteRunServer = () => {
       ) {
         return;
       }
-      logDebug(`${connectionLabel} runtime log.`, entry?.direction, safeStringify(entry?.payload ?? entry));
+      const payload = entry?.payload;
+      const contextLabel = `${connectionLabel} agent`;
+      if (!payload) {
+        logDebug(`${connectionLabel} runtime log.`, entry?.direction, payload);
+        return;
+      }
+
+      if (entry?.direction === "error") {
+        logError(`${contextLabel} error.`, payload);
+        return;
+      }
+
+      if (entry?.direction === "outgoing") {
+        const desc = describeRpcForLog(payload);
+        const level = desc.type === "request" ? "INFO" : "DEBUG";
+        logRpc({ level, contextLabel, direction: "->", payload });
+        return;
+      }
+
+      if (entry?.direction === "incoming") {
+        const desc = describeRpcForLog(payload);
+        const methodHint = (
+          payload
+          && typeof payload === "object"
+          && !Array.isArray(payload)
+          && "id" in payload
+        ) ? requestMethodById.get(payload.id) : undefined;
+        const level = payload?.error ? "ERROR" : (desc.type === "response" ? "INFO" : "DEBUG");
+        logRpc({ level, contextLabel, direction: "<-", payload, methodHint });
+        const missingSessionId = extractSessionNotFoundId(payload?.error);
+        if (missingSessionId) {
+          logWarn(`${contextLabel} session missing in agent process.`, {
+            sessionId: missingSessionId,
+            hint: "This usually means the WS reconnected or the agent process restarted between session/new and session/prompt."
+          });
+        }
+        return;
+      }
+
+      if (entry?.direction === "notification") {
+        logRpc({ level: "DEBUG", contextLabel, direction: "<-", payload });
+        return;
+      }
+
+      logDebug(`${connectionLabel} runtime log.`, entry?.direction, safePrettyJsonForLog(payload));
     });
 
     ws.on("message", (data) => {
@@ -953,7 +1240,7 @@ const startAcpRemoteRunServer = () => {
         const parsed = parseJson(data);
         if (!parsed.value) {
           logError(`${connectionLabel} invalid JSON payload.`, parsed.raw.slice(0, 200));
-          sendJsonRpc(ws, buildJsonRpcError(null, "Invalid JSON"), connectionLabel);
+          sendRpc(buildJsonRpcError(null, "Invalid JSON"));
           return;
         }
 
@@ -961,7 +1248,22 @@ const startAcpRemoteRunServer = () => {
         logDebug(`${connectionLabel} received ${messages.length} message(s).`);
         for (const message of messages) {
           const startedAt = Date.now();
-          logDebug(`${connectionLabel} <-`, describeMessage(message), safeStringify(message));
+          const inboundDesc = describeRpcForLog(message);
+          if (
+            inboundDesc.type === "request"
+            && message
+            && typeof message === "object"
+            && !Array.isArray(message)
+            && message.id !== null
+            && message.id !== undefined
+          ) {
+            requestMethodById.set(message.id, message.method);
+            logRpc({ level: "INFO", contextLabel: connectionLabel, direction: "<-", payload: message });
+          } else if (inboundDesc.type === "notification") {
+            logRpc({ level: "DEBUG", contextLabel: connectionLabel, direction: "<-", payload: message });
+          } else {
+            logRpc({ level: "DEBUG", contextLabel: connectionLabel, direction: "<-", payload: message });
+          }
           const hasMeta = Boolean(
             message?.params
             && typeof message.params === "object"
@@ -972,7 +1274,7 @@ const startAcpRemoteRunServer = () => {
             logDebug(`${connectionLabel} received params._meta.`, summarizeMetaForLog(message.params._meta));
           }
           if (!isJsonRpcRequest(message)) {
-            sendJsonRpc(ws, buildJsonRpcError(message?.id ?? null, "Invalid JSON-RPC payload"), connectionLabel);
+            sendRpc(buildJsonRpcError(message?.id ?? null, "Invalid JSON-RPC payload"));
             continue;
           }
 
@@ -992,7 +1294,7 @@ const startAcpRemoteRunServer = () => {
 
           logDebug(`${connectionLabel} processing request.`, { method: message.method, id: message.id });
           if (hasMeta && message.method !== "session/new") {
-            logDebug(`${connectionLabel} passing params._meta through unchanged.`, { method: message.method });
+            logDebug(`${connectionLabel} stripping params._meta before forwarding to runtime.`, { method: message.method });
           }
 
           if (message.method === "session/new") {
@@ -1033,9 +1335,10 @@ const startAcpRemoteRunServer = () => {
                     cwd: runtime.spawnCwd || process.cwd()
                   });
                 }
-                const response = await runtime.sendRequest(message, ACP_REMOTE_REQUEST_TIMEOUT_MS);
+                const delegatedMessage = { ...message, params: stripMetaFromParams(message.params) };
+                const response = await runtime.sendRequest(delegatedMessage, ACP_REMOTE_REQUEST_TIMEOUT_MS);
                 const formatted = normalizeJsonRpcResponse(response, message.id);
-                sendJsonRpc(ws, formatted, connectionLabel);
+                sendRpc(formatted);
                 hasAnySession = true;
                 logDebug(`${connectionLabel} session/new completed (delegated).`, { id: message.id, durationMs: Date.now() - startedAt });
                 continue;
@@ -1074,12 +1377,12 @@ const startAcpRemoteRunServer = () => {
                 applied
               });
 
-              const agentParams = { ...params, cwd: context.workdir };
+              const agentParams = stripMetaFromParams({ ...params, cwd: context.workdir });
               const agentMessage = { ...message, params: agentParams };
               logDebug(`${connectionLabel} session/new forwarding request to runtime with updated cwd.`, {
                 id: message.id,
                 cwd: context.workdir,
-                meta: summarizeMetaForLog(agentParams?._meta)
+                metaStripped: "_meta" in (params || {})
               });
               if (!runtime.started) {
                 logDebug(`${connectionLabel} starting ACP runtime for session/new.`, {
@@ -1097,14 +1400,14 @@ const startAcpRemoteRunServer = () => {
               } else {
                 notify("session/new", "Session created (unknown sessionId)", { cwd: context.workdir });
               }
-              sendJsonRpc(ws, initialTarget ? attachTargetMeta(formatted, initialTarget, connectionLabel) : formatted, connectionLabel);
+              sendRpc(initialTarget ? attachTargetMeta(formatted, initialTarget, connectionLabel) : formatted);
               hasAnySession = true;
               logDebug(`${connectionLabel} session/new completed.`, { id: message.id, sessionId: sessionId || null, durationMs: Date.now() - startedAt });
             } catch (err) {
               const messageText = err instanceof Error ? err.message : "Remote session setup failed";
               logError(`${connectionLabel} session/new failed.`, messageText);
               notify("session/new", "Failed", { error: messageText });
-              sendJsonRpc(ws, buildJsonRpcError(message.id, messageText, -32000), connectionLabel);
+              sendRpc(buildJsonRpcError(message.id, messageText, -32000));
               logDebug(`${connectionLabel} session/new error returned.`, { id: message.id, durationMs: Date.now() - startedAt });
             }
             continue;
@@ -1119,17 +1422,18 @@ const startAcpRemoteRunServer = () => {
                   cwd: runtime.spawnCwd || process.cwd()
                 });
               }
-              const response = await runtime.sendRequest(message, ACP_REMOTE_REQUEST_TIMEOUT_MS);
+              const forwardMessage = { ...message, params: stripMetaFromParams(message.params) };
+              const response = await runtime.sendRequest(forwardMessage, ACP_REMOTE_REQUEST_TIMEOUT_MS);
               const formatted = normalizeJsonRpcResponse(response, message.id);
               const sessionId = getSessionIdFromParams(message.params);
               if (!sessionId) {
-                sendJsonRpc(ws, formatted, connectionLabel);
+                sendRpc(formatted);
                 logDebug(`${connectionLabel} session/prompt completed (no sessionId).`, { id: message.id, durationMs: Date.now() - startedAt });
                 continue;
               }
               const context = sessionContexts.get(sessionId);
               if (!context) {
-                sendJsonRpc(ws, formatted, connectionLabel);
+                sendRpc(formatted);
                 logDebug(`${connectionLabel} session/prompt completed (unknown session context).`, { id: message.id, sessionId, durationMs: Date.now() - startedAt });
                 continue;
               }
@@ -1137,18 +1441,18 @@ const startAcpRemoteRunServer = () => {
                 notify("git", "Committing and pushing changes", { sessionId });
                 const target = await ensureCommittedAndPushed(context, notify);
                 notify("git", "Target branch ready", { target });
-                sendJsonRpc(ws, attachTargetMeta(formatted, target, connectionLabel), connectionLabel);
+                sendRpc(attachTargetMeta(formatted, target, connectionLabel));
                 logDebug(`${connectionLabel} session/prompt completed (pushed).`, { id: message.id, sessionId, durationMs: Date.now() - startedAt });
               } catch (pushErr) {
                 const pushMessage = pushErr instanceof Error ? pushErr.message : "Failed to push changes";
                 logError(`${connectionLabel} push failed.`, pushMessage);
                 notify("git", "Push failed", { error: pushMessage });
-                sendJsonRpc(ws, formatted, connectionLabel);
+                sendRpc(formatted);
                 logDebug(`${connectionLabel} session/prompt completed (push failed).`, { id: message.id, sessionId, durationMs: Date.now() - startedAt });
               }
             } catch (err) {
               const messageText = err instanceof Error ? err.message : "ACP runtime error";
-              sendJsonRpc(ws, buildJsonRpcError(message.id, messageText, -32000), connectionLabel);
+              sendRpc(buildJsonRpcError(message.id, messageText, -32000));
               logDebug(`${connectionLabel} session/prompt error returned.`, { id: message.id, durationMs: Date.now() - startedAt });
             }
             continue;
@@ -1162,13 +1466,14 @@ const startAcpRemoteRunServer = () => {
                 cwd: runtime.spawnCwd || process.cwd()
               });
             }
-            const response = await runtime.sendRequest(message, ACP_REMOTE_REQUEST_TIMEOUT_MS);
+            const forwardMessage = { ...message, params: stripMetaFromParams(message.params) };
+            const response = await runtime.sendRequest(forwardMessage, ACP_REMOTE_REQUEST_TIMEOUT_MS);
             const formatted = normalizeJsonRpcResponse(response, message.id);
-            sendJsonRpc(ws, formatted, connectionLabel);
+            sendRpc(formatted);
             logDebug(`${connectionLabel} request completed.`, { method: message.method, id: message.id, durationMs: Date.now() - startedAt });
           } catch (err) {
             const messageText = err instanceof Error ? err.message : "ACP runtime error";
-            sendJsonRpc(ws, buildJsonRpcError(message.id, messageText, -32000), connectionLabel);
+            sendRpc(buildJsonRpcError(message.id, messageText, -32000));
             logDebug(`${connectionLabel} request error returned.`, { method: message.method, id: message.id, durationMs: Date.now() - startedAt });
           }
         }
@@ -1205,10 +1510,13 @@ const startAcpRemoteRunServer = () => {
 
   });
 
-  httpServer.listen(ACP_REMOTE_PORT, () => {
-    log(`Remote run server listening on http://localhost:${ACP_REMOTE_PORT}`);
-    log(`WebSocket endpoint -> ws://localhost:${ACP_REMOTE_PORT}${expectedPath}`);
-    log(`Agents endpoint -> http://localhost:${ACP_REMOTE_PORT}/acp/agents`);
+  httpServer.listen(ACP_REMOTE_PORT, ACP_REMOTE_BIND_HOST || undefined, () => {
+    const protocol = String(ACP_REMOTE_ADVERTISE_PROTOCOL || "http").toLowerCase();
+    const wsProtocol = protocol === "https" ? "wss" : "ws";
+    const baseUrl = `${protocol}://${ACP_REMOTE_ADVERTISE_HOST}:${ACP_REMOTE_PORT}`;
+    log("Remote run server listening.", { port: ACP_REMOTE_PORT, bindHost: ACP_REMOTE_BIND_HOST || "0.0.0.0", advertiseAs: baseUrl });
+    log(`WebSocket endpoint -> ${wsProtocol}://${ACP_REMOTE_ADVERTISE_HOST}:${ACP_REMOTE_PORT}${expectedPath}`);
+    log(`Agents endpoint -> ${baseUrl}/acp/agents`);
     log(`ACP config -> ${ACP_CONFIG}`);
     log(`Git root -> ${ACP_REMOTE_GIT_ROOT}`);
   });

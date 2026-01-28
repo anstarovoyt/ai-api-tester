@@ -12,6 +12,7 @@ class ACPRuntime extends EventEmitter {
     this.stdoutBuffer = "";
     this.started = false;
     this.spawnCwd = "";
+    this.childToken = 0;
   }
 
   setSpawnCwd(cwd) {
@@ -43,14 +44,21 @@ class ACPRuntime extends EventEmitter {
     if (this.started) {
       return;
     }
-    this.child = spawn(this.agentConfig.command, this.agentConfig.args || [], {
+    this.childToken += 1;
+    const token = this.childToken;
+    const child = spawn(this.agentConfig.command, this.agentConfig.args || [], {
       cwd: this.spawnCwd || undefined,
       env: { ...process.env, ...(this.agentConfig.env || {}) },
       stdio: ["pipe", "pipe", "pipe"]
     });
+    this.child = child;
     this.started = true;
+    this.stdoutBuffer = "";
 
-    this.child.stdout.on("data", (chunk) => {
+    child.stdout.on("data", (chunk) => {
+      if (this.child !== child || this.childToken !== token) {
+        return;
+      }
       this.stdoutBuffer += chunk.toString("utf8");
       let index;
       while ((index = this.stdoutBuffer.indexOf("\n")) >= 0) {
@@ -60,20 +68,32 @@ class ACPRuntime extends EventEmitter {
       }
     });
 
-    this.child.stderr.on("data", (chunk) => {
+    child.stderr.on("data", (chunk) => {
+      if (this.child !== child || this.childToken !== token) {
+        return;
+      }
       const message = chunk.toString("utf8").trim();
       if (message) {
         this.pushLog({ direction: "error", payload: message });
       }
     });
 
-    this.child.on("exit", (code) => {
+    child.on("exit", (code) => {
+      if (this.child !== child || this.childToken !== token) {
+        return;
+      }
       this.pushLog({ direction: "error", payload: `ACP process exited with code ${code ?? "unknown"}` });
+      this.child = null;
       this.started = false;
     });
 
-    this.child.on("error", (err) => {
+    child.on("error", (err) => {
+      if (this.child !== child || this.childToken !== token) {
+        return;
+      }
       this.pushLog({ direction: "error", payload: `Failed to start ACP process: ${err instanceof Error ? err.message : err}` });
+      this.child = null;
+      this.started = false;
     });
   }
 
@@ -143,9 +163,14 @@ class ACPRuntime extends EventEmitter {
 
   stop() {
     if (this.child) {
-      this.child.kill();
+      const child = this.child;
       this.child = null;
       this.started = false;
+      try {
+        child.kill();
+      } catch {
+        // ignore
+      }
     }
   }
 }
