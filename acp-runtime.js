@@ -11,6 +11,15 @@ class ACPRuntime extends EventEmitter {
     this.logCounter = 1;
     this.stdoutBuffer = "";
     this.started = false;
+    this.spawnCwd = "";
+  }
+
+  setSpawnCwd(cwd) {
+    if (this.started) {
+      return false;
+    }
+    this.spawnCwd = cwd ? String(cwd) : "";
+    return true;
   }
 
   pushLog(entry) {
@@ -35,6 +44,7 @@ class ACPRuntime extends EventEmitter {
       return;
     }
     this.child = spawn(this.agentConfig.command, this.agentConfig.args || [], {
+      cwd: this.spawnCwd || undefined,
       env: { ...process.env, ...(this.agentConfig.env || {}) },
       stdio: ["pipe", "pipe", "pipe"]
     });

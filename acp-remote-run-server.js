@@ -3,6 +3,7 @@ const os = require("os");
 const path = require("path");
 const fs = require("fs");
 const crypto = require("crypto");
+const util = require("util");
 const { spawn } = require("child_process");
 const { WebSocketServer, WebSocket } = require("ws");
 const { ACPRuntime } = require("./acp-runtime");
@@ -17,17 +18,49 @@ const ACP_REMOTE_TOKEN = process.env.ACP_REMOTE_TOKEN || "";
 const ACP_REMOTE_AGENT = process.env.ACP_REMOTE_AGENT || "";
 const ACP_REMOTE_PORT = Number(process.env.ACP_REMOTE_PORT || process.env.PORT || DEFAULT_PORT);
 const ACP_REMOTE_GIT_ROOT = process.env.ACP_REMOTE_GIT_ROOT || path.join(os.homedir(), "git");
+const ACP_REMOTE_GIT_ROOT_SOURCE = process.env.ACP_REMOTE_GIT_ROOT ? "env:ACP_REMOTE_GIT_ROOT" : "default:~/git";
 const ACP_REMOTE_REQUEST_TIMEOUT_MS = Number(process.env.ACP_REMOTE_REQUEST_TIMEOUT_MS || DEFAULT_TIMEOUT_MS);
 const ACP_REMOTE_GIT_USER_NAME = process.env.ACP_REMOTE_GIT_USER_NAME || "ACP Remote";
 const ACP_REMOTE_GIT_USER_EMAIL = process.env.ACP_REMOTE_GIT_USER_EMAIL || "acp-remote@localhost";
 const ACP_REMOTE_PUSH = !["0", "false", "no"].includes(String(process.env.ACP_REMOTE_PUSH || "true").toLowerCase());
 const ACP_REMOTE_VERBOSE = !["0", "false", "no"].includes(String(process.env.ACP_REMOTE_VERBOSE || "true").toLowerCase());
 const ACP_REMOTE_LOG_PAYLOADS = !["0", "false", "no"].includes(String(process.env.ACP_REMOTE_LOG_PAYLOADS || "false").toLowerCase());
+const ACP_REMOTE_COALESCE_SESSION_UPDATES = !["0", "false", "no"].includes(
+  String(process.env.ACP_REMOTE_COALESCE_SESSION_UPDATES || "true").toLowerCase()
+);
+const ACP_REMOTE_SESSION_UPDATE_LOG_FLUSH_MS = Number(process.env.ACP_REMOTE_SESSION_UPDATE_LOG_FLUSH_MS || 2_000);
 
 let connectionCounter = 1;
 
+const START_TIMESTAMP = new Date().toISOString().replace(/[:.]/g, "-");
+const LOG_DIR = path.join(__dirname, ".log");
+const LOG_FILE_PATH = path.join(LOG_DIR, `${START_TIMESTAMP}-acp-remote.log`);
+let logFileStream = null;
+
+try {
+  fs.mkdirSync(LOG_DIR, { recursive: true });
+  logFileStream = fs.createWriteStream(LOG_FILE_PATH, { flags: "a" });
+  logFileStream.on("error", () => {
+    logFileStream = null;
+  });
+} catch {
+  logFileStream = null;
+}
+
+const writeLogLineToFile = (line) => {
+  if (!logFileStream) {
+    return;
+  }
+  try {
+    logFileStream.write(`${line}\n`);
+  } catch {
+    // ignore file logging failures
+  }
+};
+
 const logWithLevel = (level, ...args) => {
   const prefix = `[ACP-REMOTE-RUN ${new Date().toISOString()}]${level ? ` [${level}]` : ""}`;
+  writeLogLineToFile(util.format(prefix, ...args));
   if (level === "ERROR") {
     console.error(prefix, ...args);
   } else if (level === "WARN") {
@@ -47,9 +80,87 @@ const logDebug = (...args) => {
   logWithLevel("DEBUG", ...args);
 };
 
+const sessionUpdateLogCoalescer = (() => {
+  const pending = new Map();
+  let timer = null;
+
+  const canCoalesce = () => ACP_REMOTE_VERBOSE && ACP_REMOTE_COALESCE_SESSION_UPDATES && !ACP_REMOTE_LOG_PAYLOADS;
+
+  const scheduleFlush = () => {
+    if (timer || !canCoalesce()) {
+      return;
+    }
+    timer = setTimeout(() => {
+      timer = null;
+      flush();
+    }, ACP_REMOTE_SESSION_UPDATE_LOG_FLUSH_MS);
+    timer.unref?.();
+  };
+
+  const bump = (contextLabel, direction) => {
+    if (!canCoalesce()) {
+      return false;
+    }
+    const key = `${contextLabel}|${direction}`;
+    const current = pending.get(key) || { contextLabel, direction, count: 0 };
+    current.count += 1;
+    pending.set(key, current);
+    scheduleFlush();
+    return true;
+  };
+
+  const flush = (filterContextLabel) => {
+    if (!canCoalesce()) {
+      pending.clear();
+      return;
+    }
+    for (const [key, entry] of pending.entries()) {
+      if (filterContextLabel && entry.contextLabel !== filterContextLabel) {
+        continue;
+      }
+      pending.delete(key);
+      logDebug(`${entry.contextLabel} ${entry.direction} session/update (x${entry.count})`);
+    }
+    if (pending.size === 0 && timer) {
+      clearTimeout(timer);
+      timer = null;
+    }
+  };
+
+  return { bump, flush };
+})();
+
 const ensureDir = (dirPath) => {
   fs.mkdirSync(dirPath, { recursive: true });
 };
+
+const closeLogFile = () => {
+  if (!logFileStream) {
+    return;
+  }
+  try {
+    logFileStream.end();
+  } catch {
+    // ignore
+  } finally {
+    logFileStream = null;
+  }
+};
+
+process.on("exit", () => {
+  sessionUpdateLogCoalescer.flush();
+  closeLogFile();
+});
+process.on("SIGINT", () => {
+  sessionUpdateLogCoalescer.flush();
+  closeLogFile();
+  process.exit(0);
+});
+process.on("SIGTERM", () => {
+  sessionUpdateLogCoalescer.flush();
+  closeLogFile();
+  process.exit(0);
+});
 
 const loadAcpConfig = () => {
   if (!fs.existsSync(ACP_CONFIG)) {
@@ -361,12 +472,30 @@ const runCommand = (command, args, options = {}) => new Promise((resolve, reject
 
 const runGit = (args, options = {}) => runCommand("git", args, options);
 
+const redactGitUrl = (value) => {
+  if (!value || typeof value !== "string") {
+    return value;
+  }
+  try {
+    const url = new URL(value);
+    if (url.username || url.password) {
+      url.username = "***";
+      url.password = "***";
+    }
+    return url.toString();
+  } catch {
+    // not a WHATWG URL (e.g. git@host:owner/repo)
+  }
+  return value.replace(/^(https?:\/\/)[^@]+@/i, "$1***@").replace(/^(ssh:\/\/)[^@]+@/i, "$1***@");
+};
+
 const ensureRepoWorkdir = async (remote, runId, notify) => {
   const parsed = parseGitRemote(remote.url);
   if (!parsed) {
     throw new Error("Unsupported git remote URL");
   }
 
+  const remoteUrlForLogs = redactGitUrl(remote.url);
   const segments = parsed.repoPath.split("/").filter(Boolean);
   const repoName = segments[segments.length - 1] || "repo";
   const owner = segments[0] || "owner";
@@ -381,22 +510,41 @@ const ensureRepoWorkdir = async (remote, runId, notify) => {
   ];
 
   let repoDir = preferredRepoDir;
+  let repoDirReason = "preferred path (no existing match checked yet)";
+  const candidateChecks = [];
   for (const candidate of candidateRepoDirs) {
-    if (!fs.existsSync(path.join(candidate, ".git"))) {
+    const hasGit = fs.existsSync(path.join(candidate, ".git"));
+    if (!hasGit) {
+      candidateChecks.push({ candidate, hasGit, match: false });
       continue;
     }
     try {
       const origin = await runGit(["-C", candidate, "remote", "get-url", "origin"]);
       if (isSameRepo(origin.stdout.trim(), remote.url)) {
         repoDir = candidate;
+        repoDirReason = `matched existing repo origin (${candidate})`;
+        candidateChecks.push({
+          candidate,
+          hasGit,
+          origin: redactGitUrl(origin.stdout.trim()),
+          match: true
+        });
         break;
       }
+      candidateChecks.push({
+        candidate,
+        hasGit,
+        origin: redactGitUrl(origin.stdout.trim()),
+        match: false
+      });
     } catch {
-      // ignore
+      candidateChecks.push({ candidate, hasGit, match: false, error: "failed to read origin url" });
     }
   }
 
   if (repoDir === preferredRepoDir && fs.existsSync(ACP_REMOTE_GIT_ROOT)) {
+    repoDirReason = "preferred path (no match in candidates; scanning git root)";
+    const scanned = [];
     try {
       const dirents = fs.readdirSync(ACP_REMOTE_GIT_ROOT, { withFileTypes: true });
       for (const dirent of dirents) {
@@ -411,11 +559,17 @@ const ensureRepoWorkdir = async (remote, runId, notify) => {
           const origin = await runGit(["-C", candidate, "remote", "get-url", "origin"]);
           if (isSameRepo(origin.stdout.trim(), remote.url)) {
             repoDir = candidate;
+            repoDirReason = `matched existing repo origin via git root scan (${candidate})`;
+            scanned.push({ candidate, origin: redactGitUrl(origin.stdout.trim()), match: true });
             break;
           }
+          scanned.push({ candidate, origin: redactGitUrl(origin.stdout.trim()), match: false });
         } catch {
           // ignore
         }
+      }
+      if (ACP_REMOTE_VERBOSE) {
+        logDebug("Git root scan results.", { gitRoot: ACP_REMOTE_GIT_ROOT, scanned });
       }
     } catch {
       // ignore
@@ -425,6 +579,26 @@ const ensureRepoWorkdir = async (remote, runId, notify) => {
   const worktreesRoot = path.join(ACP_REMOTE_GIT_ROOT, ".acp-remote-worktrees", parsed.host, ...parsed.repoPath.split("/").filter(Boolean));
   const workdir = path.join(worktreesRoot, runId);
   const branchName = `agent/changes-${sanitizeBranchComponent(runId).slice(0, 24)}`;
+
+  log("Git workdir selection.", {
+    gitRoot: ACP_REMOTE_GIT_ROOT,
+    gitRootSource: ACP_REMOTE_GIT_ROOT_SOURCE,
+    preferredRepoDir,
+    repoDir,
+    repoDirReason,
+    worktreesRoot,
+    host: parsed.host,
+    repoPath: parsed.repoPath,
+    candidatesChecked: candidateChecks.length
+  });
+  if (ACP_REMOTE_VERBOSE) {
+    logDebug("Git candidate selection details.", {
+      remote: { host: parsed.host, repoPath: parsed.repoPath, url: remoteUrlForLogs },
+      preferredRepoDir,
+      candidates: candidateChecks
+    });
+  }
+  notify("git/dir", "Resolved git directories", { gitRoot: ACP_REMOTE_GIT_ROOT, repoDir, repoDirReason, worktreesRoot });
 
   const ref = remote.revision || (remote.branch ? `origin/${remote.branch}` : "");
   if (!ref) {
@@ -436,7 +610,7 @@ const ensureRepoWorkdir = async (remote, runId, notify) => {
     ensureDir(path.dirname(workdir));
 
     if (!fs.existsSync(repoDir)) {
-      notify("git/clone", "Cloning repository", { url: remote.url, repoDir });
+      notify("git/clone", "Cloning repository", { url: remoteUrlForLogs, repoDir });
       await runGit(["clone", remote.url, repoDir]);
     } else if (!fs.existsSync(path.join(repoDir, ".git"))) {
       throw new Error(`Path exists but is not a git repository: ${repoDir}`);
@@ -448,7 +622,7 @@ const ensureRepoWorkdir = async (remote, runId, notify) => {
       const currentRemote = await runGit(["-C", repoDir, "remote", "get-url", "origin"]);
       const actual = currentRemote.stdout.trim();
       if (actual && actual !== remote.url) {
-        notify("git/remote", "Updating origin remote URL", { from: actual, to: remote.url });
+        notify("git/remote", "Updating origin remote URL", { from: redactGitUrl(actual), to: remoteUrlForLogs });
         await runGit(["-C", repoDir, "remote", "set-url", "origin", remote.url]);
       }
     } catch {
@@ -550,6 +724,17 @@ const sendJsonRpc = (ws, payload, contextLabel = "") => {
     logWarn(`${contextLabel} attempted to send empty payload.`);
     return;
   }
+  const shouldCoalesceSessionUpdate = (
+    payload
+    && typeof payload === "object"
+    && !Array.isArray(payload)
+    && payload.method === "session/update"
+    && !("id" in payload)
+  );
+  if (shouldCoalesceSessionUpdate && sessionUpdateLogCoalescer.bump(contextLabel, "->")) {
+    sendJson(ws, payload);
+    return;
+  }
   logDebug(`${contextLabel} ->`, describeMessage(payload), safeStringify(payload));
   sendJson(ws, payload);
 };
@@ -557,6 +742,7 @@ const sendJsonRpc = (ws, payload, contextLabel = "") => {
 const startAcpRemoteRunServer = () => {
   const expectedPath = normalizePath(ACP_REMOTE_PATH);
   const wss = new WebSocketServer({ noServer: true });
+  log("Git root configured.", { gitRoot: ACP_REMOTE_GIT_ROOT, source: ACP_REMOTE_GIT_ROOT_SOURCE });
 
   const httpServer = http.createServer((req, res) => {
     res.setHeader("Access-Control-Allow-Origin", "*");
@@ -654,6 +840,16 @@ const startAcpRemoteRunServer = () => {
     });
 
     runtime.on("log", (entry) => {
+      if (
+        entry?.direction === "notification"
+        && entry?.payload
+        && typeof entry.payload === "object"
+        && !Array.isArray(entry.payload)
+        && entry.payload.method === "session/update"
+        && sessionUpdateLogCoalescer.bump(connectionLabel, "runtime")
+      ) {
+        return;
+      }
       logDebug(`${connectionLabel} runtime log.`, entry?.direction, safeStringify(entry?.payload ?? entry));
     });
 
@@ -690,6 +886,9 @@ const startAcpRemoteRunServer = () => {
               const remote = params?._meta?.remote;
               if (!remote?.url || !remote?.revision) {
                 notify("session/new", "Missing _meta.remote (delegating without git prep)", {});
+                if (params.cwd) {
+                  runtime.setSpawnCwd(params.cwd);
+                }
                 const response = await runtime.sendRequest(message, ACP_REMOTE_REQUEST_TIMEOUT_MS);
                 const formatted = normalizeJsonRpcResponse(response, message.id);
                 sendJsonRpc(ws, formatted, connectionLabel);
@@ -711,6 +910,7 @@ const startAcpRemoteRunServer = () => {
                 notify("git", "Initial push failed", { error: pushMessage });
               }
               notify("session/new", "Starting ACP session", { cwd: context.workdir });
+              runtime.setSpawnCwd(context.workdir);
 
               const agentParams = { ...params, cwd: context.workdir };
               const agentMessage = { ...message, params: agentParams };
@@ -796,11 +996,13 @@ const startAcpRemoteRunServer = () => {
 
     ws.on("close", (code, reason) => {
       log(`${connectionLabel} closed.`, { code, reason: reason ? reason.toString("utf8") : "" });
+      sessionUpdateLogCoalescer.flush(connectionLabel);
       cleanup();
     });
 
     ws.on("error", (err) => {
       logError(`${connectionLabel} socket error.`, err instanceof Error ? err.message : err);
+      sessionUpdateLogCoalescer.flush(connectionLabel);
       cleanup();
     });
 
