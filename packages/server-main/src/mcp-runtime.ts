@@ -1,21 +1,37 @@
-const fs = require("fs");
-const path = require("path");
-const { spawn } = require("child_process");
-const { EventEmitter } = require("events");
+import * as fs from "fs";
+import * as path from "path";
+import { spawn, type ChildProcessWithoutNullStreams } from "child_process";
+import { EventEmitter } from "events";
 
-class MCPRuntime extends EventEmitter {
-  constructor(configPath) {
+type McpStdioConfig = {
+  type: "stdio";
+  command: string;
+  args?: string[];
+  env?: Record<string, string>;
+};
+
+export type MCPLogEntry = {
+  id: number;
+  timestamp: string;
+  direction: "outgoing" | "incoming" | "notification" | "raw" | "error";
+  payload: unknown;
+};
+
+export class MCPRuntime extends EventEmitter {
+  private readonly configPath: string;
+  private child: ChildProcessWithoutNullStreams | null = null;
+  private pendingRequests = new Map<unknown, (payload: unknown) => void>();
+  private logEntries: MCPLogEntry[] = [];
+  private logCounter = 1;
+  private stdoutBuffer = "";
+  private started = false;
+
+  constructor(configPath: string) {
     super();
     this.configPath = configPath;
-    this.child = null;
-    this.pendingRequests = new Map();
-    this.logEntries = [];
-    this.logCounter = 1;
-    this.stdoutBuffer = "";
-    this.started = false;
   }
 
-  loadConfig() {
+  private loadConfig(): McpStdioConfig {
     const resolvedPath = path.isAbsolute(this.configPath)
       ? this.configPath
       : path.join(process.cwd(), this.configPath);
@@ -25,17 +41,17 @@ class MCPRuntime extends EventEmitter {
     }
 
     const raw = fs.readFileSync(resolvedPath, "utf8");
-    const config = JSON.parse(raw);
+    const config = JSON.parse(raw) as Partial<McpStdioConfig>;
 
     if (!config || config.type !== "stdio" || !config.command) {
       throw new Error("Invalid config. Expected { type: 'stdio', command: string, args?: string[], env?: object }");
     }
 
-    return config;
+    return config as McpStdioConfig;
   }
 
-  pushLog(entry) {
-    const item = {
+  private pushLog(entry: Omit<MCPLogEntry, "id" | "timestamp">): void {
+    const item: MCPLogEntry = {
       id: this.logCounter++,
       timestamp: new Date().toISOString(),
       ...entry
@@ -47,11 +63,11 @@ class MCPRuntime extends EventEmitter {
     this.emit("log", item);
   }
 
-  getLogs() {
+  getLogs(): MCPLogEntry[] {
     return this.logEntries.slice();
   }
 
-  start() {
+  start(): void {
     if (this.started) {
       return;
     }
@@ -59,12 +75,12 @@ class MCPRuntime extends EventEmitter {
     this.child = spawn(config.command, config.args || [], {
       env: { ...process.env, ...(config.env || {}) },
       stdio: ["pipe", "pipe", "pipe"]
-    });
+    }) as ChildProcessWithoutNullStreams;
     this.started = true;
 
     this.child.stdout.on("data", (chunk) => {
       this.stdoutBuffer += chunk.toString("utf8");
-      let index;
+      let index: number;
       while ((index = this.stdoutBuffer.indexOf("\n")) >= 0) {
         const line = this.stdoutBuffer.slice(0, index);
         this.stdoutBuffer = this.stdoutBuffer.slice(index + 1);
@@ -85,23 +101,24 @@ class MCPRuntime extends EventEmitter {
     });
 
     this.child.on("error", (err) => {
-      this.pushLog({ direction: "error", payload: `Failed to start MCP process: ${err instanceof Error ? err.message : err}` });
+      const message = err instanceof Error ? err.message : String(err);
+      this.pushLog({ direction: "error", payload: `Failed to start MCP process: ${message}` });
     });
   }
 
-  handleLine(line) {
+  private handleLine(line: string): void {
     const trimmed = line.trim();
     if (!trimmed) {
       return;
     }
     try {
-      const parsed = JSON.parse(trimmed);
+      const parsed = JSON.parse(trimmed) as Record<string, unknown>;
       if (parsed && typeof parsed === "object") {
         if (parsed.id !== undefined && this.pendingRequests.has(parsed.id)) {
-          this.pendingRequests.get(parsed.id)(parsed);
+          this.pendingRequests.get(parsed.id)?.(parsed);
           this.pendingRequests.delete(parsed.id);
         }
-        if (parsed.method && !("id" in parsed)) {
+        if (typeof (parsed as any).method === "string" && !("id" in parsed)) {
           this.pushLog({ direction: "notification", payload: parsed });
         } else {
           this.pushLog({ direction: "incoming", payload: parsed });
@@ -114,10 +131,14 @@ class MCPRuntime extends EventEmitter {
     }
   }
 
-  sendRequest(payload, timeoutMs = 30_000) {
+  async sendRequest(payload: { jsonrpc?: string; id: unknown; method: string; params?: unknown }, timeoutMs = 30_000): Promise<unknown> {
     if (!this.child || !this.started) {
       this.start();
     }
+    if (!this.child) {
+      return { error: { message: "MCP runtime is not started" } };
+    }
+
     const outgoing = {
       jsonrpc: payload.jsonrpc || "2.0",
       id: payload.id,
@@ -127,7 +148,7 @@ class MCPRuntime extends EventEmitter {
     this.pushLog({ direction: "outgoing", payload: outgoing });
     this.child.stdin.write(`${JSON.stringify(outgoing)}\n`);
 
-    return new Promise((resolve) => {
+    return await new Promise((resolve) => {
       const timeout = setTimeout(() => {
         this.pendingRequests.delete(outgoing.id);
         resolve({ error: { message: "Response timeout" } });
@@ -139,9 +160,12 @@ class MCPRuntime extends EventEmitter {
     });
   }
 
-  sendNotification(payload) {
+  sendNotification(payload: { jsonrpc?: string; method: string; params?: unknown }): void {
     if (!this.child || !this.started) {
       this.start();
+    }
+    if (!this.child) {
+      return;
     }
     const outgoing = {
       jsonrpc: payload.jsonrpc || "2.0",
@@ -152,7 +176,7 @@ class MCPRuntime extends EventEmitter {
     this.child.stdin.write(`${JSON.stringify(outgoing)}\n`);
   }
 
-  stop() {
+  stop(): void {
     if (this.child) {
       this.child.kill();
       this.child = null;
@@ -161,4 +185,3 @@ class MCPRuntime extends EventEmitter {
   }
 }
 
-module.exports = { MCPRuntime };

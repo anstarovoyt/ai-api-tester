@@ -35,7 +35,7 @@ A full-stack API testing tool for OpenAI-compatible APIs, MCP, A2A, and ACP prot
 ## Setup Instructions
 
 ### Prerequisites
-- Node.js (v14+)
+- Node.js (v18+)
 - npm or yarn
 
 ### Installation
@@ -82,9 +82,10 @@ The proxy server forwards requests to `http://localhost:1234` by default, making
 | Endpoint | Description |
 |----------|-------------|
 | `http://localhost:3000` | Frontend application |
-| `http://localhost:3001/` | Proxy server for API requests |
-| `ws://localhost:3010/acp` | ACP Remote Run WebSocket server |
-| `http://localhost:3010/acp/agents` | Lists local ACP agents from `~/.jetbrains/acp.json` |
+| `http://localhost:3001/` | Gateway server (OpenAI proxy + MCP + ACP JSON-RPC) |
+| `ws://localhost:3001/acp` | ACP WebSocket proxy (gateway) |
+| `ws://localhost:3011/acp` | ACP Remote Run WebSocket server |
+| `http://localhost:3011/acp/agents` | Lists local ACP agents from `~/.jetbrains/acp.json` |
 
 ## ACP Remote Run Server
 
@@ -100,3 +101,10 @@ Environment variables:
 - `ACP_REMOTE_PATH` (default: `/acp`)
 - `ACP_REMOTE_TOKEN` (optional)
 - `ACP_REMOTE_GIT_ROOT` (default: `~/git`)
+
+## Monorepo Structure
+
+- `packages/frontend` - React + Vite frontend
+- `packages/server-main` - Gateway server (Express)
+- `packages/server-remote-acp` - ACP WebSocket servers (including remote-run)
+- `packages/acp-runtime` - ACP stdio runtime

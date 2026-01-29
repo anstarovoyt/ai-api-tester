@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import PrettySelect from './PrettySelect';
 
-interface ACPRemoteTesterProps {
+interface ACPTesterProps {
   apiUrl: string;
   apiKey: string;
 }
@@ -41,15 +41,6 @@ interface ChatMessage {
   timestamp: string;
   sessionId: string;
 }
-
-interface RemoteTarget {
-  url: string;
-  branch: string;
-  revision: string;
-}
-
-const REQUEST_TIMEOUT_MS = 60_000;
-
 const methodConfigs: Record<string, MethodConfig> = {
   'initialize': {
     template: `{
@@ -62,39 +53,39 @@ const methodConfigs: Record<string, MethodConfig> = {
     "terminal": false
   },
   "clientInfo": {
-    "name": "acp-remote-tester",
+    "name": "acp-tester",
     "version": "1.0.0"
   }
 }`,
-    description: 'Negotiates protocol compatibility and exchanges capabilities over WebSocket. Run this first to learn what the agent supports, and to confirm the negotiated <span class="font-semibold">protocolVersion</span>.'
+    description: 'Negotiates protocol compatibility and exchanges capabilities. Run this first to learn what the agent supports (e.g., <span class="font-semibold">loadSession</span> or MCP transports). The response includes <span class="font-semibold">agentCapabilities</span> and the negotiated <span class="font-semibold">protocolVersion</span>.<br><br><span class="font-semibold">protocolVersion</span>: number - ACP protocol version<br><span class="font-semibold">clientCapabilities</span>: object - Capabilities supported by the client<br><span class="font-semibold">clientInfo</span>: object - Client name/version metadata'
   },
   'authenticate': {
     template: `{
   "methodId": "auth_method_id"
 }`,
-    description: 'Authenticates the client with the agent when required. Use this only if the agent requests authentication during initialization.'
+    description: 'Authenticates the client with the agent when required. Use this only if the agent requests authentication during initialization and provides supported methods.<br><br><span class="font-semibold">methodId</span>: string - Authentication method ID from <span class="font-semibold">authMethods</span>'
   },
   'session/new': {
     template: `{
-  "cwd": "",
-  "mcpServers": [],
-  "_meta": {
-    "remote": {
-      "url": "git@github.com:user/repo.git",
-      "branch": "main",
-      "revision": "abc123def456..."
-    }
-  }
+  "cwd": "/Users/andrey.starovoyt/WebstormProjects/testAPI",
+  "mcpServers": []
 }`,
-    description: 'Creates a new remote ACP session. Include <span class="font-semibold">_meta.remote</span> with the git URL, branch, and revision. The agent should respond with <span class="font-semibold">_meta.target</span> describing the branch it pushed to.'
+    description: 'Creates a new ACP session with fresh context. Use this once initialization is complete to establish the working directory and MCP connections. The response includes a new <span class="font-semibold">sessionId</span> used for all follow-up calls.<br><br><span class="font-semibold">cwd</span>: string - Absolute working directory for the session<br><span class="font-semibold">mcpServers</span>: array - MCP server configurations to connect (stdio/http/sse)'
   },
   'session/load': {
     template: `{
   "sessionId": "sess_abc123def456",
-  "cwd": "",
-  "mcpServers": []
+  "cwd": "/home/user/project",
+  "mcpServers": [
+    {
+      "name": "filesystem",
+      "command": "/path/to/mcp-server",
+      "args": ["--stdio"],
+      "env": []
+    }
+  ]
 }`,
-    description: 'Loads an existing ACP session if the agent supports <span class="font-semibold">loadSession</span>.'
+    description: 'Loads an existing ACP session if the agent supports <span class="font-semibold">loadSession</span>. The agent replays the session history via <span class="font-semibold">session/update</span> notifications before returning a response.<br><br><span class="font-semibold">sessionId</span>: string - Session identifier to resume<br><span class="font-semibold">cwd</span>: string - Absolute working directory for the session<br><span class="font-semibold">mcpServers</span>: array - MCP server configurations to connect'
   },
   'session/prompt': {
     template: `{
@@ -102,35 +93,35 @@ const methodConfigs: Record<string, MethodConfig> = {
   "prompt": [
     {
       "type": "text",
-      "text": "Hello from the remote client"
+      "text": "Hello from the client"
     }
   ]
 }`,
-    description: 'Sends a prompt within an active session. The agent replies with <span class="font-semibold">session/update</span> notifications until the turn completes.'
+    description: 'Sends a prompt within an active session. The prompt is an array of content blocks (text, resources, images, etc.), and the agent replies with <span class="font-semibold">session/update</span> notifications until it completes the turn. The final response to the request includes a <span class="font-semibold">stopReason</span>.<br><br><span class="font-semibold">sessionId</span>: string - Active session identifier<br><span class="font-semibold">prompt</span>: array - Content blocks<br>&nbsp;&nbsp;<span class="font-semibold">type</span>: string - Content type (e.g. text, resource)<br>&nbsp;&nbsp;<span class="font-semibold">text</span>: string - Text payload when type is text'
   },
   'session/cancel': {
     template: `{
   "sessionId": "sess_abc123def456"
 }`,
-    description: 'Cancels an in-flight prompt turn for a session. This is a notification (no response expected).'
+    description: 'Cancels an in-flight prompt turn for a session. This is a notification (no response expected). The agent should stop ongoing operations and eventually respond to the original <span class="font-semibold">session/prompt</span> with <span class="font-semibold">stopReason</span> set to <span class="font-semibold">cancelled</span>.<br><br><span class="font-semibold">sessionId</span>: string - Active session identifier'
   },
   'session/set_mode': {
     template: `{
   "sessionId": "sess_abc123def456",
   "modeId": "code"
 }`,
-    description: 'Switches the current mode for an active session.'
+    description: 'Switches the current mode for an active session. Use this to move between modes advertised by the agent (e.g., ask, architect, code). The agent may also emit <span class="font-semibold">current_mode_update</span> via <span class="font-semibold">session/update</span> notifications when it changes mode itself.<br><br><span class="font-semibold">sessionId</span>: string - Active session identifier<br><span class="font-semibold">modeId</span>: string - One of the available mode IDs'
   },
   'session/set_model': {
     template: `{
   "sessionId": "sess_abc123def456",
   "modelId": "opencode/big-pickle"
 }`,
-    description: '<span class="font-semibold">UNSTABLE</span> - Switches the active model for the current session.'
+    description: '<span class="font-semibold">UNSTABLE</span> — Switches the active model for the current session. This is useful when agents expose multiple models and modes depend on the chosen model. The agent may return updated mode lists after switching.<br><br><span class="font-semibold">sessionId</span>: string - Active session identifier<br><span class="font-semibold">modelId</span>: string - Model identifier from the available models list'
   },
   'ping': {
     template: '{}',
-    description: 'Checks ACP agent connectivity and measures basic responsiveness.'
+    description: 'Checks ACP agent connectivity and measures basic responsiveness. Use this to verify the agent process is running before starting a session. No parameters are required.<br><br>No parameters required.'
   }
 };
 
@@ -146,13 +137,11 @@ const sessionMethods = [
 ];
 
 const apiUrlOptions = [
-  'ws://localhost:3001/acp',
-  'ws://localhost:3001',
-  'ws://localhost:3010/acp',
-  'ws://localhost:3010'
+  'http://localhost:3001/acp',
+  'http://localhost:3001'
 ];
 
-const ACPRemoteTester: React.FC<ACPRemoteTesterProps> = ({ apiUrl, apiKey }) => {
+const ACPTester: React.FC<ACPTesterProps> = ({ apiUrl, apiKey }) => {
   const [params, setParams] = useState('');
   const [loading, setLoading] = useState(false);
   const [apiUrlValue, setApiUrlValue] = useState(apiUrl);
@@ -162,67 +151,29 @@ const ACPRemoteTester: React.FC<ACPRemoteTesterProps> = ({ apiUrl, apiKey }) => 
   const [showUrlInput, setShowUrlInput] = useState(false);
   const [requestId, setRequestId] = useState(1);
   const [logEntries, setLogEntries] = useState<LogEntry[]>([]);
-  const [sessionId, setSessionId] = useState('');
-  const [sessionReady, setSessionReady] = useState(false);
-  const [sessionCommand, setSessionCommand] = useState<'session/new' | 'session/load'>('session/new');
-  const [sessionMethod, setSessionMethod] = useState(sessionMethods[0].value);
-  const [sessionParams, setSessionParams] = useState(methodConfigs[sessionMethods[0].value].template);
-  const [availableModels, setAvailableModels] = useState<ModelOption[]>([]);
-  const [selectedModelId, setSelectedModelId] = useState('');
-  const [availableModes, setAvailableModes] = useState<ModeOption[]>([]);
-  const [selectedModeId, setSelectedModeId] = useState('');
-  const [pendingPrompts, setPendingPrompts] = useState<Set<number>>(new Set());
-  const [remoteGitInfo, setRemoteGitInfo] = useState({
-    url: 'git@github.com:user/repo.git',
-    branch: 'main',
-    revision: 'abc123def456...'
-  });
-  const [remoteMetaEnabled, setRemoteMetaEnabled] = useState(true);
-  const [remoteTarget, setRemoteTarget] = useState<RemoteTarget | null>(null);
-  const [connectionStatus, setConnectionStatus] = useState<'disconnected' | 'connecting' | 'connected' | 'error'>('disconnected');
+  const [autoRefreshLogs, setAutoRefreshLogs] = useState(true);
   const [agents, setAgents] = useState<AgentOption[]>([]);
   const [selectedAgent, setSelectedAgent] = useState('');
-  const [agentsLoading, setAgentsLoading] = useState(false);
-
-  const wsRef = useRef<WebSocket | null>(null);
-  const pendingRequestsRef = useRef<Map<number | string, (payload: any) => void>>(new Map());
-  const pendingTimeoutsRef = useRef<Map<number | string, number>>(new Map());
-  const requestTimingsRef = useRef<Map<number | string, number>>(new Map());
-  const logCounterRef = useRef(1);
-  const autoModelSessionRef = useRef<string | null>(null);
-
+  const [agentReady, setAgentReady] = useState(false);
+  const [sessionId, setSessionId] = useState('');
   const buildSessionRequestTemplate = (method: 'session/new' | 'session/load') => {
     const paramsTemplate = methodConfigs[method]?.template || '{}';
     return `{\n  \"jsonrpc\": \"2.0\",\n  \"id\": ${requestId},\n  \"method\": \"${method}\",\n  \"params\": ${paramsTemplate}\n}`;
   };
 
   const [sessionInitParams, setSessionInitParams] = useState(buildSessionRequestTemplate('session/new'));
+  const [sessionCommand, setSessionCommand] = useState<'session/new' | 'session/load'>('session/new');
+  const [sessionMethod, setSessionMethod] = useState(sessionMethods[0].value);
+  const [sessionParams, setSessionParams] = useState(methodConfigs[sessionMethods[0].value].template);
+  const [sessionReady, setSessionReady] = useState(false);
+  const [availableModels, setAvailableModels] = useState<ModelOption[]>([]);
+  const [selectedModelId, setSelectedModelId] = useState('');
+  const [availableModes, setAvailableModes] = useState<ModeOption[]>([]);
+  const [selectedModeId, setSelectedModeId] = useState('');
+  const [pendingPrompts, setPendingPrompts] = useState<Set<number>>(new Set());
+  const autoModelSessionRef = useRef<string | null>(null);
 
-  const apiUrlChoices = useMemo(() => (
-    apiUrlOptions.includes(apiUrlValue)
-      ? apiUrlOptions
-      : [...apiUrlOptions, apiUrlValue]
-  ), [apiUrlValue]);
-
-  const addLocalLog = (entry: Omit<LogEntry, 'id' | 'timestamp'>) => {
-    const id = logCounterRef.current++;
-    setLogEntries((prev) => {
-      const next = [
-        ...prev,
-        {
-          id,
-          timestamp: new Date().toISOString(),
-          ...entry
-        }
-      ];
-      if (next.length > 500) {
-        return next.slice(next.length - 500);
-      }
-      return next;
-    });
-  };
-
-  const formatContentBlock = (content: any) => {
+  const formatContentBlock = function formatContentBlock(content: any): string {
     if (!content) {
       return '';
     }
@@ -252,6 +203,12 @@ const ACPRemoteTester: React.FC<ACPRemoteTesterProps> = ({ apiUrl, apiKey }) => 
         return typeof content === 'string' ? content : JSON.stringify(content, null, 2);
     }
   };
+
+  const apiUrlChoices = useMemo(() => (
+    apiUrlOptions.includes(apiUrlValue)
+      ? apiUrlOptions
+      : [...apiUrlOptions, apiUrlValue]
+  ), [apiUrlValue]);
 
   const chatMessages = useMemo<ChatMessage[]>(() => {
     const messages: ChatMessage[] = [];
@@ -334,241 +291,69 @@ const ACPRemoteTester: React.FC<ACPRemoteTesterProps> = ({ apiUrl, apiKey }) => 
     return messages;
   }, [logEntries]);
 
-  const resolveWsUrl = (baseUrl: string, token: string, agent: string) => {
-    let urlValue = baseUrl.trim();
-    if (!urlValue) {
-      return '';
+  const resolveEndpoint = (baseUrl: string, suffix: '/acp' | '/acp/logs' | '/acp/agents' | '/acp/select') => {
+    const trimmed = baseUrl.replace(/\/+$/, '');
+    if (suffix === '/acp') {
+      return trimmed.endsWith('/acp') ? trimmed : `${trimmed}/acp`;
     }
-    if (urlValue.startsWith('http://')) {
-      urlValue = `ws://${urlValue.slice(7)}`;
+    if (trimmed.endsWith(suffix)) {
+      return trimmed;
     }
-    if (urlValue.startsWith('https://')) {
-      urlValue = `wss://${urlValue.slice(8)}`;
+    if (trimmed.endsWith('/acp')) {
+      return `${trimmed}${suffix.replace('/acp', '')}`;
     }
-    try {
-      const parsed = new URL(urlValue);
-      if (!parsed.pathname || parsed.pathname === '/') {
-        parsed.pathname = '/acp';
-      }
-      const trimmedToken = token.trim();
-      if (trimmedToken) {
-        parsed.searchParams.set('token', trimmedToken);
-      } else {
-        parsed.searchParams.delete('token');
-      }
-      const trimmedAgent = agent.trim();
-      if (trimmedAgent) {
-        parsed.searchParams.set('agent', trimmedAgent);
-      } else {
-        parsed.searchParams.delete('agent');
-      }
-      return parsed.toString();
-    } catch {
-      return urlValue;
-    }
+    return `${trimmed}${suffix}`;
   };
 
-  const resolveAgentsEndpoint = (baseUrl: string) => {
-    let urlValue = baseUrl.trim();
-    if (!urlValue) {
-      return '';
-    }
-    if (urlValue.startsWith('ws://')) {
-      urlValue = `http://${urlValue.slice(5)}`;
-    }
-    if (urlValue.startsWith('wss://')) {
-      urlValue = `https://${urlValue.slice(6)}`;
-    }
+  const addLocalLog = (entry: Omit<LogEntry, 'id' | 'timestamp'>) => {
+    setLogEntries((prev) => [
+      ...prev,
+      {
+        id: Date.now(),
+        timestamp: new Date().toISOString(),
+        ...entry
+      }
+    ]);
+  };
+
+  const fetchLogs = async () => {
     try {
-      const parsed = new URL(urlValue);
-      parsed.search = '';
-      parsed.hash = '';
-      const trimmed = parsed.toString().replace(/\/+$/, '');
-      if (trimmed.endsWith('/acp/agents')) {
-        return trimmed;
+      const res = await fetch(resolveEndpoint(apiUrlValue, '/acp/logs'));
+      if (!res.ok) {
+        return;
       }
-      if (trimmed.endsWith('/acp')) {
-        return `${trimmed}/agents`;
+      const data = await res.json();
+      if (Array.isArray(data.items)) {
+        setLogEntries((prev) => {
+          const merged = new Map(prev.map((entry) => [entry.id, entry]));
+          data.items.forEach((entry: LogEntry) => merged.set(entry.id, entry));
+          return Array.from(merged.values()).sort((a, b) => a.id - b.id);
+        });
       }
-      return `${trimmed}/acp/agents`;
     } catch {
-      const trimmed = urlValue.replace(/\/+$/, '');
-      if (trimmed.endsWith('/acp/agents')) {
-        return trimmed;
-      }
-      if (trimmed.endsWith('/acp')) {
-        return `${trimmed}/agents`;
-      }
-      return `${trimmed}/acp/agents`;
+      // Ignore log fetch errors to avoid noisy UI.
     }
   };
 
   const fetchAgents = async () => {
-    const endpoint = resolveAgentsEndpoint(apiUrlValue);
-    if (!endpoint) {
-      addLocalLog({ direction: 'error', payload: 'Missing agent list endpoint.' });
-      return;
-    }
-    setAgentsLoading(true);
-    addLocalLog({ direction: 'notification', payload: `Loading agents from ${endpoint}` });
     try {
-      const headers: Record<string, string> = {};
-      if (apiKeyValue.trim()) {
-        headers.Authorization = `Bearer ${apiKeyValue.trim()}`;
-      }
-      const res = await fetch(endpoint, { headers });
+      const res = await fetch(resolveEndpoint(apiUrlValue, '/acp/agents'));
       if (!res.ok) {
-        const errorData = await res.json().catch(() => ({}));
-        const errorMessage = errorData.error?.message || `HTTP ${res.status}`;
-        addLocalLog({ direction: 'error', payload: `Failed to load agents: ${errorMessage}` });
+        addLocalLog({ direction: 'error', payload: 'Failed to load ACP agents.' });
         return;
       }
-      const data = await res.json().catch(() => ({}));
-      if (!Array.isArray(data.agents)) {
-        addLocalLog({ direction: 'error', payload: 'Agent list response is missing agents array.' });
-        return;
-      }
-      setAgents(data.agents);
-      setSelectedAgent((prev) => {
-        if (prev && data.agents.some((agent: AgentOption) => agent.name === prev)) {
-          return prev;
+      const data = await res.json();
+      if (Array.isArray(data.agents)) {
+        setAgents(data.agents);
+        if (!selectedAgent && data.agents.length > 0) {
+          const defaultAgent = data.agents.find((agent: { name: string; }) => agent.name === 'OpenCode');
+          setSelectedAgent((defaultAgent || data.agents[0]).name);
         }
-        const preferred = data.agents.find((agent: AgentOption) => agent.name === 'OpenCode');
-        return preferred?.name || data.agents[0]?.name || '';
-      });
-      addLocalLog({ direction: 'notification', payload: `Loaded ${data.agents.length} agents.` });
+      }
     } catch {
-      addLocalLog({ direction: 'error', payload: 'Failed to load agents.' });
-    } finally {
-      setAgentsLoading(false);
+      addLocalLog({ direction: 'error', payload: 'Failed to connect to ACP server.' });
     }
   };
-
-  const clearPendingRequests = () => {
-    pendingTimeoutsRef.current.forEach((timeoutId) => window.clearTimeout(timeoutId));
-    pendingTimeoutsRef.current.clear();
-    pendingRequestsRef.current.clear();
-    requestTimingsRef.current.clear();
-    setPendingPrompts(new Set());
-  };
-
-  const connectWs = () => {
-    if (connectionStatus === 'connecting' || connectionStatus === 'connected') {
-      return;
-    }
-    const url = resolveWsUrl(apiUrlValue, apiKeyValue, selectedAgent);
-    if (!url) {
-      addLocalLog({ direction: 'error', payload: 'Missing WebSocket URL.' });
-      return;
-    }
-    addLocalLog({ direction: 'notification', payload: `Connecting to ${url}` });
-    setConnectionStatus('connecting');
-    const ws = new WebSocket(url);
-    wsRef.current = ws;
-
-    ws.onopen = () => {
-      setConnectionStatus('connected');
-      addLocalLog({ direction: 'notification', payload: 'WebSocket connected.' });
-    };
-
-    ws.onclose = (event) => {
-      setConnectionStatus('disconnected');
-      const details = event?.code ? ` (code ${event.code}${event.reason ? `: ${event.reason}` : ''})` : '';
-      addLocalLog({ direction: 'notification', payload: `WebSocket disconnected${details}.` });
-      clearPendingRequests();
-      setSessionReady(false);
-    };
-
-    ws.onerror = () => {
-      setConnectionStatus('error');
-      addLocalLog({ direction: 'error', payload: 'WebSocket error.' });
-    };
-
-    ws.onmessage = (event) => {
-      const handlePayload = (payload: any) => {
-        if (!payload || typeof payload !== 'object') {
-          addLocalLog({ direction: 'raw', payload: String(payload) });
-          return;
-        }
-        const isNotification = payload.method && (payload.id === undefined || payload.id === null);
-        if (isNotification) {
-          addLocalLog({ direction: 'notification', payload });
-        } else {
-          addLocalLog({ direction: 'incoming', payload });
-        }
-        if (payload.id !== undefined && pendingRequestsRef.current.has(payload.id)) {
-          const resolver = pendingRequestsRef.current.get(payload.id);
-          if (resolver) {
-            resolver(payload);
-            pendingRequestsRef.current.delete(payload.id);
-          }
-          const startedAt = requestTimingsRef.current.get(payload.id);
-          if (startedAt) {
-            const durationMs = Date.now() - startedAt;
-            requestTimingsRef.current.delete(payload.id);
-            addLocalLog({ direction: 'notification', payload: `Response ${payload.id} in ${durationMs}ms.` });
-          }
-        }
-        const target = payload?.result?._meta?.target || payload?._meta?.target;
-        if (target && (target.url || target.branch || target.revision)) {
-          addLocalLog({ direction: 'notification', payload: { message: 'Received _meta.target', target } });
-          setRemoteTarget({
-            url: target.url || '',
-            branch: target.branch || '',
-            revision: target.revision || ''
-          });
-        }
-      };
-
-      const parseRaw = async (raw: any) => {
-        let text = '';
-        if (typeof raw === 'string') {
-          text = raw;
-        } else if (raw instanceof ArrayBuffer) {
-          text = new TextDecoder('utf-8').decode(raw);
-        } else if (raw instanceof Blob) {
-          text = await raw.text();
-        } else {
-          text = String(raw);
-        }
-
-        try {
-          const parsed = JSON.parse(text);
-          if (Array.isArray(parsed)) {
-            addLocalLog({ direction: 'notification', payload: `Received batch of ${parsed.length} messages.` });
-            parsed.forEach(handlePayload);
-          } else {
-            handlePayload(parsed);
-          }
-        } catch {
-          addLocalLog({ direction: 'error', payload: 'Failed to parse message as JSON.' });
-          addLocalLog({ direction: 'raw', payload: text });
-        }
-      };
-
-      void parseRaw(event.data);
-    };
-  };
-
-  const disconnectWs = () => {
-    if (wsRef.current) {
-      addLocalLog({ direction: 'notification', payload: 'Disconnecting WebSocket...' });
-      wsRef.current.close();
-      wsRef.current = null;
-    }
-    setConnectionStatus('disconnected');
-    clearPendingRequests();
-  };
-
-  useEffect(() => {
-    return () => {
-      disconnectWs();
-    };
-  }, []);
-
-  useEffect(() => {
-    void fetchAgents();
-  }, [apiUrlValue, apiKeyValue]);
 
   useEffect(() => {
     const config = methodConfigs[selectedMethod];
@@ -636,6 +421,80 @@ const ACPRemoteTester: React.FC<ACPRemoteTesterProps> = ({ apiUrl, apiKey }) => 
     }
   }, [sessionId, sessionCommand]);
 
+  const handleModeChange = (modeId: string) => {
+    setSelectedModeId(modeId);
+    if (!sessionReady) {
+      addLocalLog({ direction: 'error', payload: 'Start a session before switching modes.' });
+      return;
+    }
+    void sendAcpRequest('session/set_mode', {
+      sessionId,
+      modeId
+    });
+  };
+
+  const handleModelChange = (modelId: string) => {
+    setSelectedModelId(modelId);
+    if (!sessionReady) {
+      addLocalLog({ direction: 'error', payload: 'Start a session before switching models.' });
+      return;
+    }
+    void sendAcpRequest('session/set_model', {
+      sessionId,
+      modelId
+    });
+  };
+
+  useEffect(() => {
+    void fetchAgents();
+  }, [apiUrlValue]);
+
+  useEffect(() => {
+    if (!autoRefreshLogs) {
+      return;
+    }
+    void fetchLogs();
+    const interval = window.setInterval(fetchLogs, 2000);
+    return () => window.clearInterval(interval);
+  }, [autoRefreshLogs, apiUrlValue]);
+
+  const buildHeaders = () => {
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json'
+    };
+    if (apiKeyValue.trim()) {
+      headers.Authorization = `Bearer ${apiKeyValue.trim()}`;
+    }
+    return headers;
+  };
+
+  const selectAgent = async () => {
+    if (!selectedAgent) {
+      addLocalLog({ direction: 'error', payload: 'Select an ACP agent before starting.' });
+      return;
+    }
+    setLoading(true);
+    try {
+      const res = await fetch(resolveEndpoint(apiUrlValue, '/acp/select'), {
+        method: 'POST',
+        headers: buildHeaders(),
+        body: JSON.stringify({ agent: selectedAgent })
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        addLocalLog({ direction: 'error', payload: data.error?.message || 'Failed to start ACP agent.' });
+        return;
+      }
+      setAgentReady(true);
+      addLocalLog({ direction: 'incoming', payload: `ACP agent "${selectedAgent}" started.` });
+      void fetchLogs();
+    } catch {
+      addLocalLog({ direction: 'error', payload: 'Failed to reach ACP server.' });
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const updateModelAndModeState = (result: any) => {
     const models = result?.models?.availableModels;
     const currentModelId = result?.models?.currentModelId;
@@ -676,49 +535,7 @@ const ACPRemoteTester: React.FC<ACPRemoteTesterProps> = ({ apiUrl, apiKey }) => 
     }
   };
 
-  const sendWsRequest = (payload: any, requestIdValue: number | string) => {
-    const ws = wsRef.current;
-    if (!ws || ws.readyState !== WebSocket.OPEN) {
-      addLocalLog({ direction: 'error', payload: 'Connect to the WebSocket server first.' });
-      return null;
-    }
-    ws.send(JSON.stringify(payload));
-    return new Promise((resolve) => {
-      const timeoutId = window.setTimeout(() => {
-        pendingRequestsRef.current.delete(requestIdValue);
-        pendingTimeoutsRef.current.delete(requestIdValue);
-        requestTimingsRef.current.delete(requestIdValue);
-        addLocalLog({ direction: 'error', payload: `Request ${requestIdValue} timed out.` });
-        resolve({ error: { message: 'Response timeout' } });
-      }, REQUEST_TIMEOUT_MS);
-      pendingTimeoutsRef.current.set(requestIdValue, timeoutId);
-      pendingRequestsRef.current.set(requestIdValue, (data) => {
-        window.clearTimeout(timeoutId);
-        pendingTimeoutsRef.current.delete(requestIdValue);
-        resolve(data);
-      });
-    });
-  };
-
-  const applyRemoteMeta = (paramsPayload: any) => {
-    if (!remoteMetaEnabled) {
-      return paramsPayload;
-    }
-    const url = remoteGitInfo.url.trim();
-    const branch = remoteGitInfo.branch.trim();
-    const revision = remoteGitInfo.revision.trim();
-    if (!url || !branch || !revision) {
-      addLocalLog({ direction: 'error', payload: 'Fill url, branch, and revision before starting a remote session.' });
-      return null;
-    }
-    const nextPayload = { ...paramsPayload };
-    nextPayload._meta = { ...(paramsPayload?._meta || {}) };
-    nextPayload._meta.remote = { url, branch, revision };
-    addLocalLog({ direction: 'notification', payload: { message: 'Applied _meta.remote', remote: nextPayload._meta.remote } });
-    return nextPayload;
-  };
-
-  const sendAcpRequest = async (method: string, paramsPayload: any) => {
+  const sendAcpRequest = async (method: string, paramsPayload: object) => {
     setLoading(true);
     const requestIdValue = requestId;
     const payload = {
@@ -728,16 +545,32 @@ const ACPRemoteTester: React.FC<ACPRemoteTesterProps> = ({ apiUrl, apiKey }) => 
       params: paramsPayload
     };
     setRequestId((prev) => prev + 1);
-    requestTimingsRef.current.set(requestIdValue, Date.now());
-    addLocalLog({ direction: 'outgoing', payload });
     if (method === 'session/prompt') {
       setPendingPrompts((prev) => new Set(prev).add(requestIdValue));
     }
 
     try {
-      const response = await sendWsRequest(payload, requestIdValue);
-      if (!response) {
-        requestTimingsRef.current.delete(requestIdValue);
+      const res = await fetch(resolveEndpoint(apiUrlValue, '/acp'), {
+        method: 'POST',
+        headers: buildHeaders(),
+        body: JSON.stringify(payload)
+      });
+
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}));
+        const errorMessage = errorData.error?.message ||
+          errorData.message ||
+          `HTTP Error: ${res.status} - ${res.statusText}`;
+        addLocalLog({ direction: 'error', payload: `API Error: ${errorMessage}` });
+        return;
+      }
+
+      const data = await res.json().catch(() => null);
+      if (!data) {
+        const text = await res.text();
+        if (text) {
+          addLocalLog({ direction: 'incoming', payload: text });
+        }
         return null;
       }
       if (method === 'session/prompt') {
@@ -748,27 +581,23 @@ const ACPRemoteTester: React.FC<ACPRemoteTesterProps> = ({ apiUrl, apiKey }) => 
         });
       }
       if (method === 'session/new' || method === 'session/load') {
-        const sessionFromResult = response.result?.session_id || response.result?.sessionId || response.session_id || response.sessionId;
-        const sessionFromParams = paramsPayload.sessionId || paramsPayload.session_id;
+        const sessionFromResult = data.result?.session_id || data.result?.sessionId || data.session_id || data.sessionId;
+        const sessionFromParams = (paramsPayload as { sessionId?: string; session_id?: string }).sessionId ||
+          (paramsPayload as { sessionId?: string; session_id?: string }).session_id;
         const sessionResolved = sessionFromResult || sessionFromParams;
         if (sessionResolved) {
           setSessionId(sessionResolved);
           setSessionReady(true);
         }
       }
-      if (response.result) {
-        updateModelAndModeState(response.result);
-      }
-      if (response.error) {
-        addLocalLog({ direction: 'error', payload: response.error });
-      }
-      return response;
+      updateModelAndModeState(data.result);
+      void fetchLogs();
+      return data;
     } catch (err) {
       addLocalLog({
         direction: 'error',
         payload: err instanceof Error ? err.message : 'Unknown ACP error'
       });
-      requestTimingsRef.current.delete(requestIdValue);
       if (method === 'session/prompt') {
         setPendingPrompts((prev) => {
           const next = new Set(prev);
@@ -782,22 +611,38 @@ const ACPRemoteTester: React.FC<ACPRemoteTesterProps> = ({ apiUrl, apiKey }) => 
     }
   };
 
-  const sendAcpNotification = async (method: string, paramsPayload: any) => {
+  const sendAcpNotification = async (method: string, paramsPayload: object) => {
     setLoading(true);
     const payload = {
       jsonrpc: '2.0',
       method,
       params: paramsPayload
     };
-    addLocalLog({ direction: 'outgoing', payload });
 
     try {
-      const ws = wsRef.current;
-      if (!ws || ws.readyState !== WebSocket.OPEN) {
-        addLocalLog({ direction: 'error', payload: 'Connect to the WebSocket server first.' });
+      const res = await fetch(resolveEndpoint(apiUrlValue, '/acp'), {
+        method: 'POST',
+        headers: buildHeaders(),
+        body: JSON.stringify(payload)
+      });
+
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}));
+        const errorMessage = errorData.error?.message ||
+          errorData.message ||
+          `HTTP Error: ${res.status} - ${res.statusText}`;
+        addLocalLog({ direction: 'error', payload: `API Error: ${errorMessage}` });
         return;
       }
-      ws.send(JSON.stringify(payload));
+
+      const data = await res.json().catch(() => null);
+      if (!data) {
+        const text = await res.text();
+        if (text) {
+          addLocalLog({ direction: 'incoming', payload: text });
+        }
+      }
+      void fetchLogs();
     } catch (err) {
       addLocalLog({
         direction: 'error',
@@ -806,30 +651,6 @@ const ACPRemoteTester: React.FC<ACPRemoteTesterProps> = ({ apiUrl, apiKey }) => 
     } finally {
       setLoading(false);
     }
-  };
-
-  const handleModeChange = (modeId: string) => {
-    setSelectedModeId(modeId);
-    if (!sessionReady) {
-      addLocalLog({ direction: 'error', payload: 'Start a session before switching modes.' });
-      return;
-    }
-    void sendAcpRequest('session/set_mode', {
-      sessionId,
-      modeId
-    });
-  };
-
-  const handleModelChange = (modelId: string) => {
-    setSelectedModelId(modelId);
-    if (!sessionReady) {
-      addLocalLog({ direction: 'error', payload: 'Start a session before switching models.' });
-      return;
-    }
-    void sendAcpRequest('session/set_model', {
-      sessionId,
-      modelId
-    });
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -851,52 +672,15 @@ const ACPRemoteTester: React.FC<ACPRemoteTesterProps> = ({ apiUrl, apiKey }) => 
     await sendAcpRequest(selectedMethod, requestBody);
   };
 
-  const handleSessionCommand = () => {
-    try {
-      const parsed = sessionInitParams ? JSON.parse(sessionInitParams) : {};
-      const methodValue = typeof parsed.method === 'string' ? parsed.method : sessionCommand;
-      const paramsPayload = parsed.params && typeof parsed.params === 'object' ? parsed.params : parsed;
-      if (methodValue === 'session/new') {
-        const nextPayload = applyRemoteMeta(paramsPayload);
-        if (!nextPayload) {
-          return;
-        }
-        void sendAcpRequest(methodValue, nextPayload);
-        return;
-      }
-      void sendAcpRequest(methodValue, paramsPayload);
-    } catch (err) {
-      addLocalLog({
-        direction: 'error',
-        payload: `Invalid JSON in session params: ${err instanceof Error ? err.message : 'Unknown error'}`
-      });
-    }
-  };
-
-  const statusLabel = connectionStatus === 'connected'
-    ? 'Connected'
-    : connectionStatus === 'connecting'
-    ? 'Connecting'
-    : connectionStatus === 'error'
-    ? 'Error'
-    : 'Disconnected';
-  const statusDot = connectionStatus === 'connected'
-    ? 'bg-green-500'
-    : connectionStatus === 'connecting'
-    ? 'bg-amber-500'
-    : connectionStatus === 'error'
-    ? 'bg-red-500'
-    : 'bg-gray-400';
-
   return (
     <div>
-      <h1 className="text-3xl font-bold text-gray-800 mb-6">ACP Remote Run Tester</h1>
+      <h1 className="text-3xl font-bold text-gray-800 mb-6">ACP (Agent Client Protocol) Tester</h1>
 
       <div className="bg-white rounded-lg shadow-md p-6 mb-6">
         <h2 className="text-xl font-semibold text-gray-700 mb-4">Configuration</h2>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
-            <label className="block text-sm font-medium text-gray-600 mb-1">WebSocket URL</label>
+            <label className="block text-sm font-medium text-gray-600 mb-1">ACP Server URL</label>
             <div className="flex items-center space-x-2">
               <PrettySelect
                 value={apiUrlValue}
@@ -918,12 +702,9 @@ const ACPRemoteTester: React.FC<ACPRemoteTesterProps> = ({ apiUrl, apiKey }) => 
                 value={apiUrlValue}
                 onChange={(e) => setApiUrlValue(e.target.value)}
                 className="w-full mt-2 px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                placeholder="ws://localhost:3001/acp"
+                placeholder="Enter custom ACP server URL"
               />
             )}
-            <p className="text-xs text-gray-500 mt-2">
-              URL changes take effect after reconnect.
-            </p>
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-600 mb-1">Client Token (Optional)</label>
@@ -932,130 +713,56 @@ const ACPRemoteTester: React.FC<ACPRemoteTesterProps> = ({ apiUrl, apiKey }) => 
               value={apiKeyValue}
               onChange={(e) => setApiKeyValue(e.target.value)}
               className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-              placeholder="Token appended as ?token= for browser WebSocket"
             />
           </div>
-        </div>
-        <div className="mt-4 flex flex-wrap items-center gap-3">
-          <span className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-medium ${
-            connectionStatus === 'connected'
-              ? 'bg-green-100 text-green-800'
-              : connectionStatus === 'error'
-              ? 'bg-red-100 text-red-700'
-              : 'bg-gray-100 text-gray-600'
-          }`}>
-            <span className={`w-2 h-2 rounded-full mr-2 ${statusDot}`}></span>
-            {statusLabel}
-          </span>
-          <button
-            type="button"
-            onClick={() => {
-              if (connectionStatus === 'connected') {
-                disconnectWs();
-              } else {
-                connectWs();
-              }
-            }}
-            className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
-          >
-            {connectionStatus === 'connected' ? 'Disconnect' : 'Connect'}
-          </button>
         </div>
       </div>
 
       <div className="bg-white rounded-lg shadow-md p-6 mb-6">
-        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
           <div>
             <h2 className="text-xl font-semibold text-gray-700">Agent Selection</h2>
             <p className="text-sm text-gray-500 mt-1">
-              Loaded from <span className="font-mono">~/.jetbrains/acp.json</span> (<span className="font-mono">agent_servers</span>). Selection is sent as <span className="font-mono">?agent=</span>; reconnect to apply.
+              Pick an ACP agent from your JetBrains config and start a session.
             </p>
           </div>
-          <button
-            type="button"
-            onClick={fetchAgents}
-            disabled={agentsLoading}
-            className={`px-3 py-2 bg-gray-200 text-gray-700 rounded-md hover:bg-gray-300 focus:outline-none focus:ring-2 focus:ring-gray-500 ${
-              agentsLoading ? 'opacity-50 cursor-not-allowed' : ''
-            }`}
-          >
-            {agentsLoading ? 'Loading...' : 'Reload'}
-          </button>
+          <div className="flex items-center gap-3">
+            <span className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-medium ${
+              agentReady ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-600'
+            }`}>
+              <span className={`w-2 h-2 rounded-full mr-2 ${agentReady ? 'bg-green-500' : 'bg-gray-400'}`}></span>
+              {agentReady ? 'Agent Ready' : 'Not Connected'}
+            </span>
+          </div>
         </div>
-        <div className="mt-4">
+        <div className="mt-4 grid grid-cols-1 md:grid-cols-[1fr_auto] gap-3">
           <PrettySelect
             value={selectedAgent}
             onChange={(value) => {
               setSelectedAgent(value);
-              if (connectionStatus === 'connected') {
-                addLocalLog({ direction: 'notification', payload: 'Agent selection updated. Reconnect to apply.' });
-              }
+              setAgentReady(false);
+              setSessionId('');
+              setSessionReady(false);
+              setAvailableModels([]);
+              setSelectedModelId('');
+              setAvailableModes([]);
+              setSelectedModeId('');
             }}
             options={agents.map((agent) => ({ value: agent.name, label: agent.name }))}
-            placeholder="Select agent to proxy"
+            placeholder="Select ACP agent"
             className="w-full"
           />
-          {agents.length === 0 && (
-            <p className="mt-2 text-xs text-gray-500">
-              No agents found. Check your <span className="font-mono">agent_servers</span> config.
-            </p>
-          )}
+          <button
+            type="button"
+            onClick={selectAgent}
+            disabled={loading || !selectedAgent}
+            className={`px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+              loading || !selectedAgent ? 'opacity-50 cursor-not-allowed' : ''
+            }`}
+          >
+            Start Agent
+          </button>
         </div>
-      </div>
-
-      <div className="bg-white rounded-lg shadow-md p-6 mb-6">
-        <h2 className="text-xl font-semibold text-gray-700 mb-2">Remote Run Metadata</h2>
-        <p className="text-sm text-gray-500 mb-4">
-          Add git details from the IDE so the remote agent can clone and push to a target branch.
-        </p>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <div>
-            <label className="block text-xs font-medium text-gray-600 mb-1">Repository URL</label>
-            <input
-              type="text"
-              value={remoteGitInfo.url}
-              onChange={(e) => setRemoteGitInfo((prev) => ({ ...prev, url: e.target.value }))}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-xs"
-              placeholder="git@github.com:user/repo.git"
-            />
-          </div>
-          <div>
-            <label className="block text-xs font-medium text-gray-600 mb-1">Remote Branch</label>
-            <input
-              type="text"
-              value={remoteGitInfo.branch}
-              onChange={(e) => setRemoteGitInfo((prev) => ({ ...prev, branch: e.target.value }))}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-xs"
-              placeholder="main"
-            />
-          </div>
-          <div>
-            <label className="block text-xs font-medium text-gray-600 mb-1">Revision</label>
-            <input
-              type="text"
-              value={remoteGitInfo.revision}
-              onChange={(e) => setRemoteGitInfo((prev) => ({ ...prev, revision: e.target.value }))}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-xs"
-              placeholder="abc123def456"
-            />
-          </div>
-        </div>
-        <div className="mt-3 flex items-center gap-2 text-xs text-gray-600">
-          <input
-            type="checkbox"
-            checked={remoteMetaEnabled}
-            onChange={(e) => setRemoteMetaEnabled(e.target.checked)}
-          />
-          <span>Include _meta.remote in session/new requests</span>
-        </div>
-        {remoteTarget && (
-          <div className="mt-4 border border-emerald-200 bg-emerald-50 rounded-md p-3 text-xs text-emerald-700">
-            <div className="font-semibold mb-1">Latest target branch</div>
-            <div>URL: {remoteTarget.url || 'n/a'}</div>
-            <div>Branch: {remoteTarget.branch || 'n/a'}</div>
-            <div>Revision: {remoteTarget.revision || 'n/a'}</div>
-          </div>
-        )}
       </div>
 
       <details className="bg-white rounded-lg shadow-md p-6 mb-6">
@@ -1123,7 +830,7 @@ const ACPRemoteTester: React.FC<ACPRemoteTesterProps> = ({ apiUrl, apiKey }) => 
       <div className="bg-white rounded-lg shadow-md p-6 mb-6">
         <h2 className="text-xl font-semibold text-gray-700 mb-4">Create Session</h2>
         <p className="text-sm text-gray-500 mt-1">
-          Create a new remote session or load an existing one. The returned session ID will be filled automatically.
+          Create a new session or load an existing one. The returned session ID will be filled automatically.
         </p>
         <label className="block text-xs font-medium text-gray-600 mt-4 mb-1">Session Command</label>
         <PrettySelect
@@ -1152,10 +859,22 @@ const ACPRemoteTester: React.FC<ACPRemoteTesterProps> = ({ apiUrl, apiKey }) => 
         <div className="mt-3 flex flex-wrap gap-2">
           <button
             type="button"
-            onClick={handleSessionCommand}
-            disabled={loading}
+            onClick={() => {
+              try {
+                const parsed = sessionInitParams ? JSON.parse(sessionInitParams) : {};
+                const method = typeof parsed.method === 'string' ? parsed.method : sessionCommand;
+                const paramsPayload = parsed.params && typeof parsed.params === 'object' ? parsed.params : parsed;
+                void sendAcpRequest(method, paramsPayload);
+              } catch (err) {
+                addLocalLog({
+                  direction: 'error',
+                  payload: `Invalid JSON in session params: ${err instanceof Error ? err.message : 'Unknown error'}`
+                });
+              }
+            }}
+            disabled={loading || !selectedAgent}
             className={`inline-flex items-center px-3 py-1.5 text-sm bg-emerald-600 text-white rounded-md hover:bg-emerald-700 focus:outline-none focus:ring-2 focus:ring-emerald-500 ${
-              loading ? 'opacity-50 cursor-not-allowed' : ''
+              loading || !selectedAgent ? 'opacity-50 cursor-not-allowed' : ''
             }`}
           >
             Run Session Command
@@ -1245,7 +964,7 @@ const ACPRemoteTester: React.FC<ACPRemoteTesterProps> = ({ apiUrl, apiKey }) => 
           <label className="block text-xs font-medium text-gray-600 mb-1">Session Method</label>
           <PrettySelect
             value={sessionMethod}
-            onChange={(value) => setSessionMethod(value as 'session/prompt' | 'session/cancel' | 'session/set_mode')}
+            onChange={(value) => setSessionMethod(value as 'session/prompt' | 'session/cancel')}
             options={sessionMethods.map((method) => ({ value: method.value, label: method.label }))}
             className="w-full"
           />
@@ -1312,7 +1031,7 @@ const ACPRemoteTester: React.FC<ACPRemoteTesterProps> = ({ apiUrl, apiKey }) => 
         {pendingPrompts.size > 0 && (
           <div className="mt-3 flex items-center gap-2 text-xs text-slate-500">
             <span className="inline-flex h-2 w-2 rounded-full bg-blue-500 animate-pulse"></span>
-            Agent is responding...
+            Agent is responding…
           </div>
         )}
         <div className="mt-4 border border-gray-200 rounded-md max-h-80 overflow-auto bg-slate-50 p-4 space-y-3">
@@ -1352,16 +1071,24 @@ const ACPRemoteTester: React.FC<ACPRemoteTesterProps> = ({ apiUrl, apiKey }) => 
           <div>
             <h2 className="text-xl font-semibold text-gray-700">Live Log</h2>
             <p className="text-sm text-gray-500 mt-1">
-              WebSocket request/response log for ACP remote sessions.
+              Mirrors the ACP CLI output, including requests, responses, and notifications.
             </p>
           </div>
           <div className="flex items-center gap-3">
+            <label className="flex items-center text-sm text-gray-600 gap-2">
+              <input
+                type="checkbox"
+                checked={autoRefreshLogs}
+                onChange={(e) => setAutoRefreshLogs(e.target.checked)}
+              />
+              Auto refresh
+            </label>
             <button
               type="button"
-              onClick={() => setLogEntries([])}
+              onClick={fetchLogs}
               className="px-3 py-2 bg-gray-200 text-gray-700 rounded-md hover:bg-gray-300 focus:outline-none focus:ring-2 focus:ring-gray-500"
             >
-              Clear
+              Refresh
             </button>
           </div>
         </div>
@@ -1404,4 +1131,4 @@ const ACPRemoteTester: React.FC<ACPRemoteTesterProps> = ({ apiUrl, apiKey }) => 
   );
 };
 
-export default ACPRemoteTester;
+export default ACPTester;

@@ -1,0 +1,14 @@
+{
+  "name": "@api-tester/server-remote-acp",
+  "version": "2026.1.0",
+  "private": true,
+  "type": "commonjs",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "start:remote-run": "node dist/remote-run.js",
+    "dev:remote-run": "npm run build && npm run start:remote-run"
+  }
+}
+

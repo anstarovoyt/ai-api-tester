@@ -2,14 +2,18 @@
   "name": "api-tester",
   "version": "2026.1 EAP",
   "description": "A full-stack API testing tool for OpenAI-compatible APIs, MCP, A2A, and ACP protocols with a built-in CORS proxy server",
-  "main": "src/index.tsx",
+  "workspaces": [
+    "packages/*"
+  ],
   "scripts": {
     "start": "concurrently \"npm run server\" \"npm run client\"",
-    "server": "node server.js",
-    "server:remote-run": "node acp-remote-run-server.js",
-    "client": "vite",
-    "build": "vite build",
-    "mcp:cli": "node mcp-cli.js --config mcp-stdio.json"
+    "client": "npm run --prefix packages/frontend dev",
+    "build": "npm run --prefix packages/frontend build",
+    "typecheck": "npm run --prefix packages/frontend typecheck && npm run --prefix packages/acp-runtime typecheck && npm run --prefix packages/server-remote-acp typecheck && npm run --prefix packages/server-main typecheck",
+    "build:server": "npm run --prefix packages/acp-runtime build && npm run --prefix packages/server-remote-acp build && npm run --prefix packages/server-main build",
+    "server": "npm run build:server && node packages/server-main/dist/index.js",
+    "server:remote-run": "npm run --prefix packages/acp-runtime build && npm run --prefix packages/server-remote-acp build && node packages/server-remote-acp/dist/remote-run.js",
+    "mcp:cli": "npm run --prefix packages/server-main build && node packages/server-main/dist/mcp-cli.js --config mcp-stdio.json"
   },
   "dependencies": {
     "cors": "^2.8.5",

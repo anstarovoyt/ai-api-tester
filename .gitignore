@@ -8,6 +8,8 @@ yarn-error.log*
 /.pnp
 .pnp.js
 dist/*
+/packages/*/dist/
+/packages/*/node_modules/
 package-lock.json
 .vscode/*
 .idea/*
