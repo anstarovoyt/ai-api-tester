@@ -9,7 +9,8 @@ const { WebSocketServer, WebSocket } = require("ws");
 const { ACPRuntime } = require("./acp-runtime");
 
 const DEFAULT_PATH = "/acp";
-const DEFAULT_TIMEOUT_MS = 60_000;
+// Slow models can legitimately take several minutes to respond.
+const DEFAULT_TIMEOUT_MS = 10 * 60_000;
 const DEFAULT_PORT = 3011;
 
 const ACP_CONFIG = process.env.ACP_CONFIG || path.join(os.homedir(), ".jetbrains", "acp.json");
@@ -17,7 +18,7 @@ const ACP_REMOTE_PATH = process.env.ACP_REMOTE_PATH || DEFAULT_PATH;
 const ACP_REMOTE_TOKEN = process.env.ACP_REMOTE_TOKEN || "";
 const ACP_REMOTE_AGENT = process.env.ACP_REMOTE_AGENT || "";
 const ACP_REMOTE_PORT = Number(process.env.ACP_REMOTE_PORT || process.env.PORT || DEFAULT_PORT);
-const ACP_REMOTE_BIND_HOST = process.env.ACP_REMOTE_BIND_HOST || "";
+const ACP_REMOTE_BIND_HOST = process.env.ACP_REMOTE_BIND_HOST || "192.168.0.155";
 const ACP_REMOTE_ADVERTISE_HOST = process.env.ACP_REMOTE_ADVERTISE_HOST || (ACP_REMOTE_BIND_HOST && !["0.0.0.0", "::"].includes(ACP_REMOTE_BIND_HOST) ? ACP_REMOTE_BIND_HOST : "localhost");
 const ACP_REMOTE_ADVERTISE_PROTOCOL = process.env.ACP_REMOTE_ADVERTISE_PROTOCOL || "http";
 const resolveHomeDir = (value) => {
@@ -33,10 +34,15 @@ const resolveHomeDir = (value) => {
   return value;
 };
 
+const parsePositiveNumber = (value, fallback) => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+};
+
 const ACP_REMOTE_GIT_ROOT_SOURCE = process.env.ACP_REMOTE_GIT_ROOT || "~/git";
 const ACP_REMOTE_GIT_ROOT_SOURCE_LABEL = process.env.ACP_REMOTE_GIT_ROOT ? "env:ACP_REMOTE_GIT_ROOT" : "default";
 const ACP_REMOTE_GIT_ROOT = path.resolve(resolveHomeDir(ACP_REMOTE_GIT_ROOT_SOURCE));
-const ACP_REMOTE_REQUEST_TIMEOUT_MS = Number(process.env.ACP_REMOTE_REQUEST_TIMEOUT_MS || DEFAULT_TIMEOUT_MS);
+const ACP_REMOTE_REQUEST_TIMEOUT_MS = parsePositiveNumber(process.env.ACP_REMOTE_REQUEST_TIMEOUT_MS, DEFAULT_TIMEOUT_MS);
 const ACP_REMOTE_GIT_USER_NAME = process.env.ACP_REMOTE_GIT_USER_NAME || "ACP Remote";
 const ACP_REMOTE_GIT_USER_EMAIL = process.env.ACP_REMOTE_GIT_USER_EMAIL || "acp-remote@localhost";
 const ACP_REMOTE_PUSH = !["0", "false", "no"].includes(String(process.env.ACP_REMOTE_PUSH || "true").toLowerCase());
