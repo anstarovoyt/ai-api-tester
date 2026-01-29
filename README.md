@@ -5,10 +5,10 @@ A full-stack API testing tool for OpenAI-compatible APIs, MCP, A2A, and ACP prot
 ## Features
 
 ### Supported Protocols
-- **OpenAI API** - Full support for OpenAI-compatible endpoints including chat completions, embeddings, images, audio, and more
-- **MCP (Model Context Protocol)** - Testing interface for MCP APIs
-- **A2A (Agent-to-Agent)** - Testing interface for A2A communication protocols
-- **ACP (Agent Client Protocol)** - Testing interface for ACP APIs
+- **OpenAI API** – Full support for OpenAI-compatible endpoints including chat completions, embeddings, images, audio, and more
+- **MCP (Model Context Protocol)** – Testing interface for MCP APIs
+- **A2A (Agent-to-Agent)** – Testing interface for A2A communication protocols
+- **ACP (Agent Client Protocol)** – Testing interface for ACP APIs
 
 ### Frontend (React + TypeScript)
 - Tabbed interface for different API protocols
@@ -79,12 +79,12 @@ The proxy server forwards requests to `http://localhost:1234` by default, making
 
 ## API Endpoints
 
-| Endpoint | Description |
-|----------|-------------|
-| `http://localhost:3000` | Frontend application |
-| `http://localhost:3001/` | Gateway server (OpenAI proxy + MCP + ACP JSON-RPC) |
-| `ws://localhost:3001/acp` | ACP WebSocket proxy (gateway) |
-| `ws://localhost:3011/acp` | ACP Remote Run WebSocket server |
+| Endpoint                           | Description                                         |
+|------------------------------------|-----------------------------------------------------|
+| `http://localhost:3000`            | Frontend application                                |
+| `http://localhost:3001/`           | Gateway server (OpenAI proxy + MCP + ACP JSON-RPC)  |
+| `ws://localhost:3001/acp`          | ACP WebSocket proxy (gateway)                       |
+| `ws://localhost:3011/acp`          | ACP Remote Run WebSocket server                     |
 | `http://localhost:3011/acp/agents` | Lists local ACP agents from `~/.jetbrains/acp.json` |
 
 ## ACP Remote Run Server

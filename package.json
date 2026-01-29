@@ -9,10 +9,10 @@
     "start": "concurrently \"npm run server\" \"npm run client\"",
     "client": "npm run --prefix packages/frontend dev",
     "build": "npm run --prefix packages/frontend build",
-    "typecheck": "npm run --prefix packages/frontend typecheck && npm run --prefix packages/acp-runtime typecheck && npm run --prefix packages/server-remote-acp typecheck && npm run --prefix packages/server-main typecheck",
-    "build:server": "npm run --prefix packages/acp-runtime build && npm run --prefix packages/server-remote-acp build && npm run --prefix packages/server-main build",
+    "typecheck": "npm run --prefix packages/frontend typecheck && tsc -b",
+    "build:server": "tsc -b",
     "server": "npm run build:server && node packages/server-main/dist/index.js",
-    "server:remote-run": "npm run --prefix packages/acp-runtime build && npm run --prefix packages/server-remote-acp build && node packages/server-remote-acp/dist/remote-run.js",
+    "server:remote-run": "npm run --prefix packages/server-remote-acp build && node packages/server-remote-acp/dist/remote-run.js",
     "mcp:cli": "npm run --prefix packages/server-main build && node packages/server-main/dist/mcp-cli.js --config mcp-stdio.json"
   },
   "dependencies": {
@@ -27,6 +27,7 @@
     "@types/node": "^25.0.8",
     "@types/react": "^19.2.8",
     "@types/react-dom": "^19.2.3",
+    "@types/ws": "^8.18.1",
     "@vitejs/plugin-react": "^5.1.2",
     "autoprefixer": "^10.4.23",
     "concurrently": "^8.2.0",

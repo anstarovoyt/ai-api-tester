@@ -1,0 +1,9 @@
+{
+  "files": [],
+  "references": [
+    { "path": "./packages/acp-runtime" },
+    { "path": "./packages/server-remote-acp" },
+    { "path": "./packages/server-main" }
+  ]
+}
+

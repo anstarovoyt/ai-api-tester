@@ -1,11 +1,13 @@
 {
   "compilerOptions": {
+    "composite": true,
     "target": "ES2022",
     "lib": ["ES2022"],
     "module": "CommonJS",
     "moduleResolution": "Node",
     "rootDir": "src",
     "outDir": "dist",
+    "tsBuildInfoFile": "dist/tsconfig.tsbuildinfo",
     "declaration": true,
     "declarationMap": true,
     "sourceMap": true,
@@ -16,4 +18,3 @@
   },
   "include": ["src"]
 }
-

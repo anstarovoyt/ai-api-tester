@@ -1,12 +1,12 @@
-const http = require("http");
-const os = require("os");
-const path = require("path");
-const fs = require("fs");
-const crypto = require("crypto");
-const util = require("util");
-const { spawn } = require("child_process");
-const { WebSocketServer, WebSocket } = require("ws");
-const { ACPRuntime } = require("../../acp-runtime/dist/index.js");
+import { spawn } from "child_process";
+import * as crypto from "crypto";
+import * as fs from "fs";
+import * as http from "http";
+import * as os from "os";
+import * as path from "path";
+import * as util from "util";
+import { WebSocket, WebSocketServer } from "ws";
+import { ACPRuntime } from "../../acp-runtime";
 
 const DEFAULT_PATH = "/acp";
 // Slow models can legitimately take several minutes to respond.

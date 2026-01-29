@@ -1,12 +1,15 @@
 {
   "compilerOptions": {
+    "composite": true,
     "target": "ES2022",
     "lib": ["ES2022"],
     "module": "CommonJS",
     "moduleResolution": "Node",
     "rootDir": "src",
     "outDir": "dist",
-    "declaration": false,
+    "tsBuildInfoFile": "dist/tsconfig.tsbuildinfo",
+    "declaration": true,
+    "declarationMap": true,
     "sourceMap": true,
     "strict": false,
     "esModuleInterop": true,
@@ -14,6 +17,6 @@
     "forceConsistentCasingInFileNames": true,
     "types": ["node"]
   },
-  "include": ["src"]
+  "include": ["src"],
+  "references": [{ "path": "../acp-runtime" }]
 }
-

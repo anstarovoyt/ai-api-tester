@@ -1,7 +1,6 @@
-const { WebSocketServer, WebSocket } = require("ws");
-const util = require("util");
-
-const { ACPRuntime } = require("../../acp-runtime/dist/index.js");
+import { ACPRuntime } from "../../acp-runtime";
+import * as util from "util";
+import { WebSocket, WebSocketServer } from "ws";
 
 const DEFAULT_PATH = "/acp";
 const DEFAULT_TIMEOUT_MS = 60_000;

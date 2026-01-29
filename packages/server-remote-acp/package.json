@@ -4,11 +4,11 @@
   "private": true,
   "type": "commonjs",
   "main": "dist/index.js",
+  "types": "dist/index.d.ts",
   "scripts": {
-    "build": "tsc -p tsconfig.json",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "build": "tsc -b",
+    "typecheck": "tsc -b",
     "start:remote-run": "node dist/remote-run.js",
     "dev:remote-run": "npm run build && npm run start:remote-run"
   }
 }
-

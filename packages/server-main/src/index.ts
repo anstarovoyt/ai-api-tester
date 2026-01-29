@@ -2,12 +2,11 @@ import * as fs from "fs";
 import * as http from "http";
 import * as os from "os";
 import * as path from "path";
+import express from "express";
+import { createProxyMiddleware } from "http-proxy-middleware";
 import { MCPRuntime } from "./mcp-runtime";
-
-const express = require("express");
-const { createProxyMiddleware } = require("http-proxy-middleware");
-const { ACPRuntime } = require("../../acp-runtime/dist/index.js");
-const { attachAcpRemoteServer } = require("../../server-remote-acp/dist/index.js");
+import { ACPRuntime } from "../../acp-runtime";
+import { attachAcpRemoteServer } from "../../server-remote-acp";
 
 const OPENAI_TARGET = process.env.OPENAI_TARGET || "http://localhost:1234";
 const MCP_CONFIG = process.env.MCP_STDIO_CONFIG || "mcp-stdio.json";
