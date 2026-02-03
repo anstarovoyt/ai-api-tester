@@ -101,6 +101,7 @@ Environment variables:
 - `ACP_REMOTE_PATH` (default: `/acp`)
 - `ACP_REMOTE_TOKEN` (optional)
 - `ACP_REMOTE_GIT_ROOT` (default: `~/git`)
+- `ACP_REMOTE_SESSION_IDLE_TTL_MS` (default: `1800000`) - how long to keep sessions/worktrees after last disconnect
 
 ## Monorepo Structure
 
