@@ -1,5 +1,5 @@
 import * as http from "http";
-import { WebSocket, WebSocketServer } from "ws";
+import {WebSocket, WebSocketServer} from "ws";
 import {
   ACP_CONFIG,
   ACP_REMOTE_ADVERTISE_HOST,
@@ -15,27 +15,32 @@ import {
   getAcpAgents,
   resolveAcpAgentConfig
 } from "./config";
-import { AcpAgentRuntime, getSessionIdFromPayloadParams } from "./agent";
-import { ensureCommittedAndPushed, ensureRepoWorkdir, generateRunId, redactGitUrl, type RemoteGitInfo, type TargetGitInfo } from "./git";
+import {AcpAgentRuntime, getSessionIdFromPayloadParams} from "./agent";
+import {
+  ensureCommittedAndPushed,
+  ensureRepoWorkdir,
+  generateRunId,
+  redactGitUrl,
+  type RemoteGitInfo,
+  summarizeMetaForLog,
+  type TargetGitInfo
+} from "./git";
 import {
   buildJsonRpcError,
-  describeMessage,
+  closeSocket,
   getRequestUrl,
   getSessionIdFromParams,
   getSessionIdFromResult,
   isAuthorized,
   isJsonRpcRequest,
-  normalizeJsonRpcNotification,
   normalizeJsonRpcResponse,
   normalizePath,
   parseJson,
   redactUrlForLogs,
-  stripMetaFromParams,
-  closeSocket
+  stripMetaFromParams
 } from "./jsonrpc";
-import { describeRpcForLog, log, logDebug, logError, logRpc, logWarn, sessionUpdateLogCoalescer } from "./logger";
-import { RemoteRunSessionManager } from "./sessions";
-import { summarizeMetaForLog } from "./git";
+import {describeRpcForLog, log, logDebug, logError, logRpc, logWarn, sessionUpdateLogCoalescer} from "./logger";
+import {RemoteRunSessionManager} from "./sessions";
 
 let connectionCounter = 1;
 
