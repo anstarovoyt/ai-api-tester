@@ -72,20 +72,20 @@ export const ACP_REMOTE_LOG_MAX_STRING_CHARS = Number(process.env.ACP_REMOTE_LOG
 export const ACP_REMOTE_COLOR = parseBool(process.env.ACP_REMOTE_COLOR ?? "true", true);
 export const USE_COLOR = Boolean(ACP_REMOTE_COLOR && process.stdout.isTTY && !process.env.NO_COLOR);
 
-export const loadAcpConfig = (): any | null => {
-  if (!fs.existsSync(ACP_CONFIG)) {
+export const loadAcpConfig = (configPath: string = ACP_CONFIG): any | null => {
+  if (!fs.existsSync(configPath)) {
     return null;
   }
   try {
-    const raw = fs.readFileSync(ACP_CONFIG, "utf8");
+    const raw = fs.readFileSync(configPath, "utf8");
     return JSON5.parse(raw);
   } catch {
     return null;
   }
 };
 
-export const getAcpAgents = (): Array<{ name: string; command: string; args: string[] }> | null => {
-  const config = loadAcpConfig();
+export const getAcpAgents = (configPath: string = ACP_CONFIG): Array<{ name: string; command: string; args: string[] }> | null => {
+  const config = loadAcpConfig(configPath);
   if (!config) {
     return null;
   }
@@ -97,10 +97,10 @@ export const getAcpAgents = (): Array<{ name: string; command: string; args: str
   }));
 };
 
-export const resolveAcpAgentConfig = (agentName?: string): { name: string; config: any } => {
-  const config = loadAcpConfig();
+export const resolveAcpAgentConfig = (agentName?: string, configPath: string = ACP_CONFIG): { name: string; config: any } => {
+  const config = loadAcpConfig(configPath);
   if (!config) {
-    throw new Error(`ACP config not found: ${ACP_CONFIG}`);
+    throw new Error(`ACP config not found: ${configPath}`);
   }
   const servers = config.agent_servers || {};
   const entries = Object.entries(servers);

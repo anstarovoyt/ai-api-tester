@@ -106,6 +106,7 @@ Environment variables:
 Notes:
 
 - `~/.jetbrains/acp.json` is parsed as JSON5 (comments and trailing commas allowed)
+- Agent `env` values in `agent_servers` are passed to the local ACP process; non-string values are stringified and `null`/`undefined` removes the variable.
 
 ## Monorepo Structure
 

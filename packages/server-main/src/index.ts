@@ -1,66 +1,16 @@
-import * as fs from "fs";
 import * as http from "http";
-import * as os from "os";
-import * as path from "path";
 import express from "express";
 import { createProxyMiddleware } from "http-proxy-middleware";
-import * as JSON5 from "json5";
 import { MCPRuntime } from "./mcp-runtime";
 import { ACPRuntime } from "../../acp-runtime";
 import { attachAcpRemoteServer } from "../../server-remote-acp";
+import { ACP_CONFIG_PATH, getAcpAgents, resolveAcpAgentConfig } from "./acp-config";
 
 const OPENAI_TARGET = process.env.OPENAI_TARGET || "http://localhost:1234";
 const MCP_CONFIG = process.env.MCP_STDIO_CONFIG || "mcp-stdio.json";
-const ACP_CONFIG = process.env.ACP_CONFIG || path.join(os.homedir(), ".jetbrains", "acp.json");
 const ACP_REMOTE_PATH = process.env.ACP_REMOTE_PATH || "/acp";
 const ACP_REMOTE_TOKEN = process.env.ACP_REMOTE_TOKEN || "";
 const ACP_REMOTE_AGENT = process.env.ACP_REMOTE_AGENT || "";
-
-const loadAcpConfig = (): any | null => {
-  if (!fs.existsSync(ACP_CONFIG)) {
-    return null;
-  }
-  try {
-    const raw = fs.readFileSync(ACP_CONFIG, "utf8");
-    return JSON5.parse(raw);
-  } catch {
-    return null;
-  }
-};
-
-const getAcpAgents = (): Array<{ name: string; command: string; args: string[] }> | null => {
-  const config = loadAcpConfig();
-  if (!config) {
-    return null;
-  }
-  const servers = config.agent_servers || {};
-  return Object.entries(servers).map(([name, value]: any) => ({
-    name,
-    command: value.command,
-    args: value.args || []
-  }));
-};
-
-const resolveAcpAgentConfig = (agentName: string | undefined): { name: string; config: any } => {
-  const config = loadAcpConfig();
-  if (!config) {
-    throw new Error(`ACP config not found: ${ACP_CONFIG}`);
-  }
-  const servers = config.agent_servers || {};
-  const entries = Object.entries(servers);
-  if (!entries.length) {
-    throw new Error("ACP config does not define any agent_servers");
-  }
-  if (agentName) {
-    const agentConfig = servers[agentName];
-    if (!agentConfig) {
-      throw new Error(`Unknown ACP agent: ${agentName}`);
-    }
-    return { name: agentName, config: agentConfig };
-  }
-  const [defaultName, defaultConfig]: any = entries[0];
-  return { name: defaultName, config: defaultConfig };
-};
 
 const startGatewayServer = () => {
   const app = express();
@@ -255,7 +205,7 @@ const startGatewayServer = () => {
   server.listen(port, () => {
     console.log(`Gateway running on http://localhost:${port}`);
     console.log(`OpenAI proxy -> ${OPENAI_TARGET} via /openAI`);
-    console.log(`ACP config -> ${ACP_CONFIG}`);
+    console.log(`ACP config -> ${ACP_CONFIG_PATH}`);
     console.log(`ACP remote ws -> ws://localhost:${port}${ACP_REMOTE_PATH}`);
   });
 

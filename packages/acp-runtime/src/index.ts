@@ -14,7 +14,7 @@ export type JsonRpcPayload = {
 export type AgentConfig = {
   command: string;
   args?: string[];
-  env?: Record<string, string>;
+  env?: Record<string, unknown>;
 };
 
 export type LogDirection = "outgoing" | "incoming" | "notification" | "raw" | "error";
@@ -24,6 +24,33 @@ export type LogEntry = {
   timestamp: string;
   direction: LogDirection;
   payload: unknown;
+};
+
+const buildSpawnEnv = (base: NodeJS.ProcessEnv, override: unknown): NodeJS.ProcessEnv => {
+  const merged: NodeJS.ProcessEnv = { ...base };
+  if (!override || typeof override !== "object" || Array.isArray(override)) {
+    return merged;
+  }
+  for (const [key, value] of Object.entries(override as Record<string, unknown>)) {
+    if (value === undefined || value === null) {
+      delete merged[key];
+      continue;
+    }
+    if (typeof value === "string") {
+      merged[key] = value;
+      continue;
+    }
+    if (typeof value === "number" || typeof value === "boolean" || typeof value === "bigint") {
+      merged[key] = String(value);
+      continue;
+    }
+    try {
+      merged[key] = JSON.stringify(value);
+    } catch {
+      merged[key] = String(value);
+    }
+  }
+  return merged;
 };
 
 export class ACPRuntime extends EventEmitter {
@@ -75,7 +102,7 @@ export class ACPRuntime extends EventEmitter {
     const token = this.childToken;
     const child = spawn(this.agentConfig.command, this.agentConfig.args || [], {
       cwd: this.spawnCwd || undefined,
-      env: { ...process.env, ...(this.agentConfig.env || {}) },
+      env: buildSpawnEnv(process.env, this.agentConfig.env),
       stdio: ["pipe", "pipe", "pipe"]
     }) as ChildProcessWithoutNullStreams;
 
@@ -210,4 +237,3 @@ export class ACPRuntime extends EventEmitter {
     }
   }
 }
-
