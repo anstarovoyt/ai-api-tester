@@ -1,4 +1,4 @@
-const readline = require("node:readline");
+import * as readline from "readline";
 
 const KEYS = [
   "ACP_TEST_STRING",
@@ -7,16 +7,17 @@ const KEYS = [
   "ACP_TEST_OBJECT",
   "ACP_TEST_ARRAY",
   "ACP_TEST_REMOVE"
-];
+] as const;
 
 const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
 
-rl.on("line", (line) => {
+rl.on("line", (line: string) => {
   const trimmed = String(line || "").trim();
   if (!trimmed) {
     return;
   }
-  let message;
+
+  let message: any;
   try {
     message = JSON.parse(trimmed);
   } catch {
@@ -30,8 +31,8 @@ rl.on("line", (line) => {
     return;
   }
 
-  const env = {};
-  const has = {};
+  const env: Record<string, string | undefined> = {};
+  const has: Record<string, boolean> = {};
   for (const key of KEYS) {
     env[key] = process.env[key];
     has[key] = Object.prototype.hasOwnProperty.call(process.env, key);

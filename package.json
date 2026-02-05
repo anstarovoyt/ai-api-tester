@@ -11,7 +11,8 @@
     "build": "npm run --prefix packages/frontend build",
     "typecheck": "npm run --prefix packages/frontend typecheck && tsc -b",
     "build:server": "tsc -b",
-    "test": "npm run build:server && node --test test/acp-env.test.cjs",
+    "build:test": "tsc -p test/tsconfig.json",
+    "test": "npm run build:server && npm run build:test && node --test test-dist/acp-env.test.js",
     "server": "npm run build:server && node packages/server-main/dist/index.js",
     "server:remote-run": "npm run --prefix packages/server-remote-acp build && node packages/server-remote-acp/dist/remote-run.js",
     "mcp:cli": "npm run --prefix packages/server-main build && node packages/server-main/dist/mcp-cli.js --config mcp-stdio.json"

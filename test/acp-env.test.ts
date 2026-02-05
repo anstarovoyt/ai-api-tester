@@ -1,25 +1,31 @@
+import * as fs from "fs";
+import * as os from "os";
+import * as path from "path";
+
 const test = require("node:test");
-const assert = require("node:assert/strict");
-const fs = require("node:fs");
-const os = require("node:os");
-const path = require("node:path");
+const assert = require("assert/strict");
+
+type RuntimeEnvSnapshot = {
+  env: Record<string, string | undefined>;
+  has: Record<string, boolean>;
+};
 
 const repoRoot = path.resolve(__dirname, "..");
-const fixtureAgentPath = path.join(__dirname, "fixtures", "env-agent.cjs");
+const fixtureAgentPath = path.join(__dirname, "fixtures", "env-agent.js");
 
-const loadDist = (relativePath) => require(path.join(repoRoot, relativePath));
+const loadDist = (relativePath: string): any => require(path.join(repoRoot, relativePath));
 const { ACPRuntime } = loadDist("packages/acp-runtime/dist/index.js");
 
-let tempDir;
-let configPath;
-let serverMainParser;
-let remoteRunParser;
-let mainAgentInfo;
-let remoteAgentInfo;
-let mainRuntimeResult;
-let remoteRuntimeResult;
+let tempDir: string | undefined;
+let configPath: string | undefined;
+let serverMainParser: any;
+let remoteRunParser: any;
+let mainAgentInfo: any;
+let remoteAgentInfo: any;
+let mainRuntimeResult: RuntimeEnvSnapshot | undefined;
+let remoteRuntimeResult: RuntimeEnvSnapshot | undefined;
 
-const writeJson5AcpConfig = (targetPath) => {
+const writeJson5AcpConfig = (targetPath: string): void => {
   const configText = `{
     // JSON5: comments and trailing commas
     agent_servers: {
@@ -40,7 +46,7 @@ const writeJson5AcpConfig = (targetPath) => {
   fs.writeFileSync(targetPath, configText, "utf8");
 };
 
-const restoreEnv = (key, oldValue) => {
+const restoreEnv = (key: string, oldValue: string | undefined): void => {
   if (oldValue === undefined) {
     delete process.env[key];
   } else {
@@ -48,15 +54,15 @@ const restoreEnv = (key, oldValue) => {
   }
 };
 
-const fetchRuntimeEnv = async (agentConfig, label) => {
+const fetchRuntimeEnv = async (agentConfig: any, label: string): Promise<RuntimeEnvSnapshot> => {
   const runtime = new ACPRuntime(agentConfig);
   try {
     const response = await runtime.sendRequest({ jsonrpc: "2.0", id: 1, method: "env/check", params: {} }, 5_000);
     assert.ok(response && typeof response === "object", `${label}: expected JSON-RPC object response`);
-    assert.equal(response.id, 1, `${label}: expected matching JSON-RPC id`);
-    assert.ok(response.result && typeof response.result === "object", `${label}: expected result object`);
+    assert.equal((response as any).id, 1, `${label}: expected matching JSON-RPC id`);
+    assert.ok((response as any).result && typeof (response as any).result === "object", `${label}: expected result object`);
 
-    const { env, has } = response.result;
+    const { env, has } = (response as any).result as RuntimeEnvSnapshot;
     assert.ok(env && typeof env === "object", `${label}: expected result.env object`);
     assert.ok(has && typeof has === "object", `${label}: expected result.has object`);
     return { env, has };
@@ -93,18 +99,18 @@ test.after(() => {
 });
 
 test("server-main parser loads JSON5 config", () => {
-  const loaded = serverMainParser.loadAcpConfig(configPath);
+  const loaded = serverMainParser.loadAcpConfig(configPath!);
   assert.ok(loaded && typeof loaded === "object");
 });
 
 test("server-main parser lists agents", () => {
-  const agents = serverMainParser.getAcpAgents(configPath);
+  const agents = serverMainParser.getAcpAgents(configPath!);
   assert.ok(Array.isArray(agents));
-  assert.ok(agents.some((a) => a.name === "TestAgent"));
+  assert.ok(agents.some((a: any) => a.name === "TestAgent"));
 });
 
 test("server-main parser resolves selected agent", () => {
-  const resolved = serverMainParser.resolveAcpAgentConfig("TestAgent", configPath);
+  const resolved = serverMainParser.resolveAcpAgentConfig("TestAgent", configPath!);
   assert.equal(resolved.name, "TestAgent");
 });
 
@@ -129,18 +135,18 @@ test("server-main parser keeps null env value from JSON5", () => {
 });
 
 test("remote-run parser loads JSON5 config", () => {
-  const loaded = remoteRunParser.loadAcpConfig(configPath);
+  const loaded = remoteRunParser.loadAcpConfig(configPath!);
   assert.ok(loaded && typeof loaded === "object");
 });
 
 test("remote-run parser lists agents", () => {
-  const agents = remoteRunParser.getAcpAgents(configPath);
+  const agents = remoteRunParser.getAcpAgents(configPath!);
   assert.ok(Array.isArray(agents));
-  assert.ok(agents.some((a) => a.name === "TestAgent"));
+  assert.ok(agents.some((a: any) => a.name === "TestAgent"));
 });
 
 test("remote-run parser resolves selected agent", () => {
-  const resolved = remoteRunParser.resolveAcpAgentConfig("TestAgent", configPath);
+  const resolved = remoteRunParser.resolveAcpAgentConfig("TestAgent", configPath!);
   assert.equal(resolved.name, "TestAgent");
 });
 
@@ -164,7 +170,7 @@ test("remote-run parser keeps null env value from JSON5", () => {
   assert.equal(remoteAgentInfo.config.env.ACP_TEST_REMOVE, null);
 });
 
-const runtimeChecks = [
+const runtimeChecks: Array<{ key: string; value: string | undefined; has: boolean }> = [
   { key: "ACP_TEST_STRING", value: "hello", has: true },
   { key: "ACP_TEST_NUMBER", value: "123", has: true },
   { key: "ACP_TEST_BOOL", value: "true", has: true },
@@ -175,14 +181,22 @@ const runtimeChecks = [
 
 for (const check of runtimeChecks) {
   test(`ACPRuntime passes ${check.key} via server-main config`, () => {
-    assert.equal(mainRuntimeResult.env[check.key], check.value);
-    assert.equal(mainRuntimeResult.has[check.key], check.has);
+    const snapshot = mainRuntimeResult;
+    if (!snapshot) {
+      throw new Error("missing mainRuntimeResult");
+    }
+    assert.equal(snapshot.env[check.key], check.value);
+    assert.equal(snapshot.has[check.key], check.has);
   });
 }
 
 for (const check of runtimeChecks) {
   test(`ACPRuntime passes ${check.key} via remote-run config`, () => {
-    assert.equal(remoteRuntimeResult.env[check.key], check.value);
-    assert.equal(remoteRuntimeResult.has[check.key], check.has);
+    const snapshot = remoteRuntimeResult;
+    if (!snapshot) {
+      throw new Error("missing remoteRuntimeResult");
+    }
+    assert.equal(snapshot.env[check.key], check.value);
+    assert.equal(snapshot.has[check.key], check.has);
   });
 }
