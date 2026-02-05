@@ -1,7 +1,7 @@
-import { ACPRuntime } from "../../acp-runtime";
-import { WebSocket, WebSocketServer } from "ws";
-import { createAcpRemoteLogger } from "./shared/logger";
-import { buildJsonRpcError, closeSocket, getRequestUrl, isAuthorized, normalizePath, parseJson } from "./shared/jsonrpc";
+import {ACPRuntime} from "../../acp-runtime";
+import {WebSocket, WebSocketServer} from "ws";
+import {createAcpRemoteLogger} from "./shared/logger";
+import {buildJsonRpcError, closeSocket, getRequestUrl, isAuthorized, normalizePath, parseJson} from "./shared/jsonrpc";
 
 const DEFAULT_PATH = "/acp";
 const DEFAULT_TIMEOUT_MS = 60_000;
@@ -35,7 +35,7 @@ const logger = createAcpRemoteLogger({
   sessionUpdateLogFlushMs: ACP_REMOTE_SESSION_UPDATE_LOG_FLUSH_MS
 });
 
-const { log, logError, logDebug, logRpc, sessionUpdateLogCoalescer } = logger;
+const { log, logError, logRpc, sessionUpdateLogCoalescer } = logger;
 
 process.on("exit", () => sessionUpdateLogCoalescer.flush());
 process.on("SIGINT", () => sessionUpdateLogCoalescer.flush());
