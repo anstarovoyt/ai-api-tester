@@ -39,6 +39,36 @@ const startGatewayServer = () => {
     acpRuntime.start();
   };
 
+  const forwardJsonRpcToRuntime = async (runtime: { sendNotification: (payload: any) => void; sendRequest: (payload: any) => Promise<any> }, req: any, res: any) => {
+    const payload = req.body;
+    if (!payload || typeof payload !== "object") {
+      res.status(400).json({ error: { message: "Invalid JSON-RPC payload" } });
+      return;
+    }
+
+    const isNotification = payload.id === undefined || payload.id === null;
+    const outgoing: any = {
+      jsonrpc: payload.jsonrpc || "2.0",
+      method: payload.method,
+      params: payload.params ?? {}
+    };
+
+    if (!outgoing.method) {
+      res.status(400).json({ error: { message: "Missing method in JSON-RPC payload" } });
+      return;
+    }
+
+    if (isNotification) {
+      runtime.sendNotification(outgoing);
+      res.json({ ok: true });
+      return;
+    }
+
+    outgoing.id = payload.id;
+    const response = await runtime.sendRequest(outgoing);
+    res.json(response);
+  };
+
   app.use("/mcp", express.json({ limit: "2mb" }));
   app.use("/acp", express.json({ limit: "2mb" }));
   app.use((req: any, res: any, next: any) => {
@@ -92,33 +122,7 @@ const startGatewayServer = () => {
 
   app.post("/mcp", async (req: any, res: any) => {
     ensureMcpStarted();
-    const payload = req.body;
-    if (!payload || typeof payload !== "object") {
-      res.status(400).json({ error: { message: "Invalid JSON-RPC payload" } });
-      return;
-    }
-
-    const isNotification = payload.id === undefined || payload.id === null;
-    const outgoing: any = {
-      jsonrpc: payload.jsonrpc || "2.0",
-      method: payload.method,
-      params: payload.params ?? {}
-    };
-
-    if (!outgoing.method) {
-      res.status(400).json({ error: { message: "Missing method in JSON-RPC payload" } });
-      return;
-    }
-
-    if (isNotification) {
-      mcpRuntime.sendNotification(outgoing);
-      res.json({ ok: true });
-      return;
-    }
-
-    outgoing.id = payload.id;
-    const response = await mcpRuntime.sendRequest(outgoing);
-    res.json(response);
+    await forwardJsonRpcToRuntime(mcpRuntime as any, req, res);
   });
 
   app.get("/mcp/logs", (req: any, res: any) => {
@@ -150,37 +154,11 @@ const startGatewayServer = () => {
   });
 
   app.post("/acp", async (req: any, res: any) => {
-    const payload = req.body;
-    if (!payload || typeof payload !== "object") {
-      res.status(400).json({ error: { message: "Invalid JSON-RPC payload" } });
-      return;
-    }
     if (!acpRuntime) {
       res.status(400).json({ error: { message: "ACP agent not selected" } });
       return;
     }
-
-    const isNotification = payload.id === undefined || payload.id === null;
-    const outgoing: any = {
-      jsonrpc: payload.jsonrpc || "2.0",
-      method: payload.method,
-      params: payload.params ?? {}
-    };
-
-    if (!outgoing.method) {
-      res.status(400).json({ error: { message: "Missing method in JSON-RPC payload" } });
-      return;
-    }
-
-    if (isNotification) {
-      acpRuntime.sendNotification(outgoing);
-      res.json({ ok: true });
-      return;
-    }
-
-    outgoing.id = payload.id;
-    const response = await acpRuntime.sendRequest(outgoing);
-    res.json(response);
+    await forwardJsonRpcToRuntime(acpRuntime, req, res);
   });
 
   app.get("/acp/logs", (req: any, res: any) => {

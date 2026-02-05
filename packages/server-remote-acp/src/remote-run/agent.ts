@@ -1,6 +1,6 @@
 import { ACPRuntime, type LogEntry } from "../../../acp-runtime";
 import { describeMessage, getSessionIdFromParams, normalizeJsonRpcNotification, stripMetaFromParams } from "./jsonrpc";
-import { logDebug, logError, logRpc, logWarn, safePrettyJsonForLog, sessionUpdateLogCoalescer } from "./logger";
+import { describeRpcForLog, logDebug, logError, logRpc, logWarn, safePrettyJsonForLog, sessionUpdateLogCoalescer } from "./logger";
 
 export type AgentInfo = {
   name: string;
@@ -38,27 +38,6 @@ const extractSessionNotFoundId = (error: any) => {
     return match ? match[1] : "";
   }
   return "";
-};
-
-const describeRpcForLog = (payload: any) => {
-  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
-    return { type: Array.isArray(payload) ? "batch" : typeof payload };
-  }
-  const hasMethod = typeof payload.method === "string";
-  const hasId = payload.id !== undefined;
-  const hasResult = "result" in payload;
-  const hasError = "error" in payload;
-  const type = hasMethod
-    ? (hasId ? "request" : "notification")
-    : (hasId && (hasResult || hasError) ? "response" : "unknown");
-  return {
-    type,
-    jsonrpc: payload.jsonrpc,
-    method: hasMethod ? payload.method : undefined,
-    id: hasId ? payload.id : undefined,
-    hasResult,
-    hasError
-  };
 };
 
 export class AcpAgentRuntime {
