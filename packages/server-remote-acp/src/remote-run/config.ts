@@ -1,6 +1,7 @@
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
+import * as JSON5 from "json5";
 
 const DEFAULT_PATH = "/acp";
 // Slow models can legitimately take several minutes to respond.
@@ -77,7 +78,7 @@ export const loadAcpConfig = (): any | null => {
   }
   try {
     const raw = fs.readFileSync(ACP_CONFIG, "utf8");
-    return JSON.parse(raw);
+    return JSON5.parse(raw);
   } catch {
     return null;
   }
@@ -130,4 +131,3 @@ export const resolveAcpAgentConfig = (agentName?: string): { name: string; confi
   const [defaultName, defaultConfig]: any = entries[0];
   return { name: defaultName, config: defaultConfig };
 };
-

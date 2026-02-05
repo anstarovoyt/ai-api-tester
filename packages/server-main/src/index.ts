@@ -4,6 +4,7 @@ import * as os from "os";
 import * as path from "path";
 import express from "express";
 import { createProxyMiddleware } from "http-proxy-middleware";
+import * as JSON5 from "json5";
 import { MCPRuntime } from "./mcp-runtime";
 import { ACPRuntime } from "../../acp-runtime";
 import { attachAcpRemoteServer } from "../../server-remote-acp";
@@ -21,7 +22,7 @@ const loadAcpConfig = (): any | null => {
   }
   try {
     const raw = fs.readFileSync(ACP_CONFIG, "utf8");
-    return JSON.parse(raw);
+    return JSON5.parse(raw);
   } catch {
     return null;
   }

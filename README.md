@@ -103,6 +103,10 @@ Environment variables:
 - `ACP_REMOTE_GIT_ROOT` (default: `~/git`)
 - `ACP_REMOTE_SESSION_IDLE_TTL_MS` (default: `1800000`) - how long to keep sessions/worktrees after last disconnect
 
+Notes:
+
+- `~/.jetbrains/acp.json` is parsed as JSON5 (comments and trailing commas allowed)
+
 ## Monorepo Structure
 
 - `packages/frontend` - React + Vite frontend
