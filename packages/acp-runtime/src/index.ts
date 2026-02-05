@@ -146,7 +146,7 @@ export class ACPRuntime extends EventEmitter {
       if (this.child !== child || this.childToken !== token) {
         return;
       }
-      const message = err instanceof Error ? err.message : String(err);
+      const message = err.message;
       this.pushLog({ direction: "error", payload: `Failed to start ACP process: ${message}` });
       this.child = null;
       this.started = false;
