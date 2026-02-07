@@ -1,0 +1,10 @@
+{
+  "name": "@api-tester/integration-tests",
+  "version": "2026.1.0",
+  "private": true,
+  "type": "commonjs",
+  "scripts": {
+    "build": "tsc -b",
+    "test": "node --test dist/*.test.js"
+  }
+}

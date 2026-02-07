@@ -8,6 +8,8 @@
   "scripts": {
     "build": "tsc -b",
     "typecheck": "tsc -b",
+    "build:test": "tsc -b test/tsconfig.json",
+    "test": "npm run build && npm run build:test && node --test dist-test/*.test.js",
     "start:remote-run": "node dist/remote-run.js",
     "dev:remote-run": "npm run build && npm run start:remote-run"
   }

@@ -10,11 +10,11 @@ type RuntimeEnvSnapshot = {
   has: Record<string, boolean>;
 };
 
-const repoRoot = path.resolve(__dirname, "..");
+const repoRoot = path.resolve(__dirname, "../..");
 const fixtureAgentPath = path.join(__dirname, "fixtures", "env-agent.js");
 
 const loadDist = (relativePath: string): any => require(path.join(repoRoot, relativePath));
-const { ACPRuntime } = loadDist("packages/acp-runtime/dist/index.js");
+const { ACPRuntime } = loadDist("acp-runtime/dist/index.js");
 
 let tempDir: string | undefined;
 let configPath: string | undefined;
@@ -76,8 +76,8 @@ test.before(async () => {
   configPath = path.join(tempDir, "acp.json");
   writeJson5AcpConfig(configPath);
 
-  serverMainParser = loadDist("packages/server-main/dist/acp-config.js");
-  remoteRunParser = loadDist("packages/server-remote-acp/dist/remote-run/config.js");
+  serverMainParser = loadDist("server-main/dist/acp-config.js");
+  remoteRunParser = loadDist("server-remote-acp/dist/remote-run/config.js");
 
   mainAgentInfo = serverMainParser.resolveAcpAgentConfig("TestAgent", configPath);
   remoteAgentInfo = remoteRunParser.resolveAcpAgentConfig("TestAgent", configPath);

@@ -46,4 +46,3 @@ rl.on("line", (line: string) => {
 
   process.stdout.write(`${JSON.stringify(response)}\n`);
 });
-
