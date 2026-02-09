@@ -9,6 +9,7 @@ yarn-error.log*
 .pnp.js
 dist/*
 /packages/*/dist/
+/packages/*/dist*/
 /packages/*/node_modules/
 /test-dist/
 package-lock.json
