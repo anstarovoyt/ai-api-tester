@@ -184,15 +184,32 @@ async function main() {
       console.log('Waiting for server to start...');
       await new Promise(resolve => setTimeout(resolve, 2000));
       
-      console.log('Checking server status...');
-      const result = await sshClient.execCommand('curl -s http://localhost:3011/health || echo "Server not responding"');
-      console.log(result.stdout.trim() || result.stderr.trim());
+      // Get a remote host for health check from a local machine
+      const remoteHost = remote.split('@')[1] || remote;
       
-      // Show last few lines of log if server not responding
-      if (result.stdout.includes('not responding') || !result.stdout.includes('ok')) {
-        console.log('\nServer log (last 20 lines):');
-        const logResult = await sshClient.execCommand(`tail -20 ${remoteDir}/server.log 2>/dev/null || echo "No log file"`);
-        console.log(logResult.stdout || logResult.stderr);
+      console.log(`Checking server status from local machine (http://${remoteHost}:3011/health)...`);
+      try {
+        const healthCheck = execSync(`curl -s --connect-timeout 5 http://${remoteHost}:3011/health`, { encoding: 'utf8' });
+        console.log(healthCheck.trim());
+      } catch (err) {
+        console.log('Server not responding from local machine');
+        
+        // Check if it's running on the remote at least
+        console.log('\nChecking if server is running on remote...');
+        const remoteCheck = await sshClient.execCommand('curl -s http://localhost:3011/health');
+        if (remoteCheck.stdout.includes('ok')) {
+          console.log('Server IS running on remote (localhost:3011 responds)');
+          console.log('But it is NOT reachable from your local machine.');
+          console.log('Possible causes:');
+          console.log('  - Firewall blocking port 3011');
+          console.log('  - Server bound to localhost only');
+          console.log('  - Network/routing issue');
+        } else {
+          console.log('Server is not running on remote either.');
+          console.log('\nServer log (last 20 lines):');
+          const logResult = await sshClient.execCommand(`tail -20 ${remoteDir}/server.log 2>/dev/null || echo "No log file"`);
+          console.log(logResult.stdout || logResult.stderr);
+        }
       }
       
       console.log('\nDeployment complete!');
