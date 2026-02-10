@@ -1,0 +1,11 @@
+{
+  "telegramToken": "PUT_YOUR_TELEGRAM_BOT_TOKEN_HERE",
+  "allowedUsers": [
+    123456789
+  ],
+  "acpRemoteUrl": "ws://localhost:3011/acp",
+  "acpRemoteHttpUrl": "http://localhost:3011",
+  "acpRemoteToken": "",
+  "defaultAgent": "",
+  "requestTimeoutMs": 600000
+}

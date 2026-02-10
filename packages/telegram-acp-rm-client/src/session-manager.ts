@@ -54,8 +54,21 @@ export class SessionManager {
     if (!client) {
       client = this.createClientFn(agent);
       this.acpClients.set(agent, client);
+      client.on("open", () => console.log("[ACP] websocket connected.", { agent }));
+      client.on("close", (code: number, reason: string) => console.log("[ACP][WARN] websocket closed.", { agent, code, reason }));
+      client.on("reconnecting", (attempt: number) => console.log("[ACP][WARN] websocket reconnecting.", { agent, attempt }));
+      client.on("reconnect_failed", () => console.log("[ACP][ERROR] websocket reconnect failed.", { agent }));
+      client.on("error", (err: Error) => console.log("[ACP][ERROR] websocket error.", { agent, error: err.message }));
     }
     return client;
+  }
+
+  getStateSummary(): { sessions: number; acpClients: number; activePromptClients: number } {
+    return {
+      sessions: this.sessions.size,
+      acpClients: this.acpClients.size,
+      activePromptClients: this.activePromptClients.size
+    };
   }
 
   private sessionKey(userId: number, chatId: number): string {
