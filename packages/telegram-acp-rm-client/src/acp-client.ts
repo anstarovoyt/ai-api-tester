@@ -15,18 +15,6 @@ export type JsonRpcNotification = {
   method: string;
   params?: unknown;
 };
-
-export type JsonRpcResponse = {
-  jsonrpc: "2.0";
-  id: JsonRpcId;
-  result?: unknown;
-  error?: {
-    code: number;
-    message: string;
-    data?: unknown;
-  };
-};
-
 export type AcpClientOptions = {
   url: string;
   token?: string;
@@ -288,13 +276,6 @@ export class AcpClient extends EventEmitter {
   async cancelSession(sessionId: string): Promise<void> {
     this.sendNotification("session/cancel", { sessionId });
   }
-
-  async getAgents(): Promise<Array<{ name: string; command: string; args: string[] }>> {
-    // This is typically an HTTP endpoint, but we can try via WS if available
-    // For now, we'll return empty and use HTTP fetch separately
-    return [];
-  }
-
   disconnect(): void {
     this.shouldReconnect = false;
     if (this.ws) {
@@ -302,10 +283,6 @@ export class AcpClient extends EventEmitter {
       this.ws = null;
     }
     this.rejectAllPending(new Error("Client disconnected"));
-  }
-
-  isConnected(): boolean {
-    return this.ws?.readyState === WebSocket.OPEN;
   }
 }
 

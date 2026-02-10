@@ -21,8 +21,8 @@ export class SessionManager {
   private sessions = new Map<number, UserSession>();
   private preferences = new Map<number, UserPreferences>();
   private acpClients = new Map<string, AcpClient>();
-  private defaultAgent: string;
-  private createClientFn: (agent: string) => AcpClient;
+  private readonly defaultAgent: string;
+  private readonly createClientFn: (agent: string) => AcpClient;
 
   constructor(defaultAgent: string, createClientFn: (agent: string) => AcpClient) {
     this.defaultAgent = defaultAgent;
@@ -45,12 +45,6 @@ export class SessionManager {
     const prefs = this.getPreferences(userId);
     prefs.selectedAgent = agent;
   }
-
-  setDefaultCwd(userId: number, cwd: string): void {
-    const prefs = this.getPreferences(userId);
-    prefs.defaultCwd = cwd;
-  }
-
   private getOrCreateClient(agent: string): AcpClient {
     let client = this.acpClients.get(agent);
     if (!client) {
@@ -59,11 +53,6 @@ export class SessionManager {
     }
     return client;
   }
-
-  getSession(userId: number): UserSession | undefined {
-    return this.sessions.get(userId);
-  }
-
   hasActiveSession(userId: number): boolean {
     return this.sessions.has(userId);
   }
@@ -72,15 +61,6 @@ export class SessionManager {
     const session = this.sessions.get(userId);
     return session?.isProcessing ?? false;
   }
-
-  setProcessing(userId: number, processing: boolean): void {
-    const session = this.sessions.get(userId);
-    if (session) {
-      session.isProcessing = processing;
-      session.lastActiveAt = Date.now();
-    }
-  }
-
   async createSession(userId: number, chatId: number, cwd?: string): Promise<UserSession> {
     // End existing session first
     await this.endSession(userId);

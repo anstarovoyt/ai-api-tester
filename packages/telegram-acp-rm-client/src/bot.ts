@@ -1,7 +1,7 @@
-import { AcpClient, fetchAgents } from "./acp-client";
-import { SessionManager } from "./session-manager";
-import { getEffectiveConfig, validateConfig } from "./config";
-import { TelegramClient, AuthenticatedContext } from "./telegram-client";
+import {AcpClient, fetchAgents} from "./acp-client";
+import {SessionManager} from "./session-manager";
+import {getEffectiveConfig, validateConfig} from "./config";
+import {TelegramClient} from "./telegram-client";
 
 export class TelegramAcpBot {
   private readonly client: TelegramClient;
