@@ -18,9 +18,13 @@ export type UserPreferences = {
 };
 
 export class SessionManager {
-  private sessions = new Map<number, UserSession>();
+  // Sessions are bound to a (userId, chatId) pair to avoid leaking a DM session into a group chat (and vice versa).
+  private sessions = new Map<string, UserSession>();
   private preferences = new Map<number, UserPreferences>();
   private acpClients = new Map<string, AcpClient>();
+  // A single ACP websocket connection (AcpClient) multiplexes notifications for all requests. To avoid cross-chat/user
+  // leakage of progress notifications, only allow one in-flight prompt per client.
+  private activePromptClients = new Set<AcpClient>();
   private readonly defaultAgent: string;
   private readonly createClientFn: (agent: string) => AcpClient;
 
@@ -53,17 +57,26 @@ export class SessionManager {
     }
     return client;
   }
-  hasActiveSession(userId: number): boolean {
-    return this.sessions.has(userId);
+
+  private sessionKey(userId: number, chatId: number): string {
+    return `${userId}:${chatId}`;
   }
 
-  isProcessing(userId: number): boolean {
-    const session = this.sessions.get(userId);
+  private getSession(userId: number, chatId: number): UserSession | undefined {
+    return this.sessions.get(this.sessionKey(userId, chatId));
+  }
+
+  hasActiveSessionInChat(userId: number, chatId: number): boolean {
+    return Boolean(this.getSession(userId, chatId));
+  }
+
+  isProcessingInChat(userId: number, chatId: number): boolean {
+    const session = this.getSession(userId, chatId);
     return session?.isProcessing ?? false;
   }
   async createSession(userId: number, chatId: number, cwd?: string): Promise<UserSession> {
-    // End existing session first
-    await this.endSession(userId);
+    // End existing session in this chat first
+    await this.endSession(userId, chatId);
 
     const prefs = this.getPreferences(userId);
     const agent = prefs.selectedAgent || this.defaultAgent;
@@ -83,17 +96,20 @@ export class SessionManager {
       isProcessing: false,
     };
 
-    this.sessions.set(userId, session);
+    this.sessions.set(this.sessionKey(userId, chatId), session);
     return session;
   }
 
-  async sendPrompt(userId: number, prompt: string, onNotification?: (notification: any) => void): Promise<PromptResult> {
-    const session = this.sessions.get(userId);
+  async sendPrompt(userId: number, chatId: number, prompt: string, onNotification?: (notification: any) => void): Promise<PromptResult> {
+    const session = this.getSession(userId, chatId);
     if (!session) {
       throw new Error("No active session. Use /new to start a new session.");
     }
 
     const client = this.getOrCreateClient(session.agent);
+    if (this.activePromptClients.has(client)) {
+      throw new Error("Another request is already being processed. Please wait or use /cancel.");
+    }
     
     // Set up notification listener if provided
     const notificationHandler = onNotification 
@@ -105,10 +121,12 @@ export class SessionManager {
     }
 
     try {
+      this.activePromptClients.add(client);
       session.isProcessing = true;
       session.lastActiveAt = Date.now();
       return await client.sendPrompt(session.sessionId, prompt);
     } finally {
+      this.activePromptClients.delete(client);
       session.isProcessing = false;
       if (notificationHandler) {
         client.off("notification", notificationHandler);
@@ -116,8 +134,8 @@ export class SessionManager {
     }
   }
 
-  async cancelCurrentRequest(userId: number): Promise<void> {
-    const session = this.sessions.get(userId);
+  async cancelCurrentRequest(userId: number, chatId: number): Promise<void> {
+    const session = this.getSession(userId, chatId);
     if (!session) {
       return;
     }
@@ -127,22 +145,23 @@ export class SessionManager {
     session.isProcessing = false;
   }
 
-  async endSession(userId: number): Promise<void> {
-    const session = this.sessions.get(userId);
+  async endSession(userId: number, chatId: number): Promise<void> {
+    const key = this.sessionKey(userId, chatId);
+    const session = this.sessions.get(key);
     if (!session) {
       return;
     }
 
     // Cancel any ongoing request
     if (session.isProcessing) {
-      await this.cancelCurrentRequest(userId);
+      await this.cancelCurrentRequest(userId, chatId);
     }
 
-    this.sessions.delete(userId);
+    this.sessions.delete(key);
   }
 
-  getSessionInfo(userId: number): string {
-    const session = this.sessions.get(userId);
+  getSessionInfo(userId: number, chatId: number): string {
+    const session = this.getSession(userId, chatId);
     if (!session) {
       return "No active session";
     }

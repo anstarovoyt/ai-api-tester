@@ -101,7 +101,7 @@ Send any text message to interact with the agent.
     // /end - End session
     this.client.onCommand(/\/end/, async ({ chatId, userId }) => {
       try {
-        await this.sessionManager.endSession(userId);
+        await this.sessionManager.endSession(userId, chatId);
         await this.client.sendMessage(chatId, "Session ended.");
       } catch (err) {
         const message = err instanceof Error ? err.message : "Failed to end session";
@@ -112,7 +112,7 @@ Send any text message to interact with the agent.
     // /status - Show session status
     this.client.onCommand(/\/status/, async ({ chatId, userId }) => {
       const prefs = this.sessionManager.getPreferences(userId);
-      const sessionInfo = this.sessionManager.getSessionInfo(userId);
+      const sessionInfo = this.sessionManager.getSessionInfo(userId, chatId);
       const status = `
 *User Preferences:*
 Selected Agent: ${prefs.selectedAgent || "default"}
@@ -185,13 +185,13 @@ ${sessionInfo}
 
     // /cancel - Cancel current request
     this.client.onCommand(/\/cancel/, async ({ chatId, userId }) => {
-      if (!this.sessionManager.isProcessing(userId)) {
+      if (!this.sessionManager.isProcessingInChat(userId, chatId)) {
         await this.client.sendMessage(chatId, "No request is currently being processed.");
         return;
       }
 
       try {
-        await this.sessionManager.cancelCurrentRequest(userId);
+        await this.sessionManager.cancelCurrentRequest(userId, chatId);
         this.client.stopTyping(chatId);
         await this.client.sendMessage(chatId, "Request cancelled.");
       } catch (err) {
@@ -208,7 +208,7 @@ ${sessionInfo}
       }
 
       // Check if there's an active session
-      if (!this.sessionManager.hasActiveSession(userId)) {
+      if (!this.sessionManager.hasActiveSessionInChat(userId, chatId)) {
         await this.client.sendMessage(
           chatId,
           "No active session. Use /new to start a session first."
@@ -217,7 +217,7 @@ ${sessionInfo}
       }
 
       // Check if already processing
-      if (this.sessionManager.isProcessing(userId)) {
+      if (this.sessionManager.isProcessingInChat(userId, chatId)) {
         await this.client.sendMessage(
           chatId,
           "A request is already being processed. Please wait or use /cancel."
@@ -242,7 +242,7 @@ ${sessionInfo}
           }
         };
 
-        const result = await this.sessionManager.sendPrompt(userId, text, onNotification);
+        const result = await this.sessionManager.sendPrompt(userId, chatId, text, onNotification);
         this.client.stopTyping(chatId);
 
         // Format and send the response
