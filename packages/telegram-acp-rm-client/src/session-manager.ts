@@ -1,4 +1,4 @@
-import { AcpClient, SessionInfo, PromptResult } from "./acp-client";
+import {AcpClient, PromptResult} from "./acp-client";
 
 export type UserSession = {
   sessionId: string;
@@ -127,8 +127,7 @@ export class SessionManager {
     try {
       session.isProcessing = true;
       session.lastActiveAt = Date.now();
-      const result = await client.sendPrompt(session.sessionId, prompt);
-      return result;
+      return await client.sendPrompt(session.sessionId, prompt);
     } finally {
       session.isProcessing = false;
       if (notificationHandler) {

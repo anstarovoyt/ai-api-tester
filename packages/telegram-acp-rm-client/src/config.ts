@@ -20,15 +20,6 @@ const parsePositiveNumber = (value: unknown, fallback: number) => {
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 };
-
-const parseBool = (value: unknown, defaultValue: boolean) => {
-  if (value === undefined || value === null || value === "") {
-    return defaultValue;
-  }
-  const lowered = String(value).toLowerCase();
-  return !["0", "false", "no"].includes(lowered);
-};
-
 const parseUserIds = (value: unknown): number[] => {
   if (!value || typeof value !== "string") {
     return [];

@@ -1,5 +1,5 @@
 import WebSocket from "ws";
-import { EventEmitter } from "events";
+import {EventEmitter} from "events";
 
 export type JsonRpcId = string | number | null;
 
@@ -211,7 +211,7 @@ export class AcpClient extends EventEmitter {
   }
 
   private rejectAllPending(error: Error): void {
-    for (const [id, pending] of this.pendingRequests) {
+    for (const [, pending] of this.pendingRequests) {
       clearTimeout(pending.timeout);
       pending.reject(error);
     }
@@ -274,16 +274,15 @@ export class AcpClient extends EventEmitter {
   }
 
   async sendPrompt(sessionId: string, prompt: string): Promise<PromptResult> {
-    const result = await this.sendRequest<PromptResult>("session/prompt", {
+    return await this.sendRequest<PromptResult>("session/prompt", {
       sessionId,
       messages: [
         {
           role: "user",
-          content: { type: "text", text: prompt },
+          content: {type: "text", text: prompt},
         },
       ],
     });
-    return result;
   }
 
   async cancelSession(sessionId: string): Promise<void> {
