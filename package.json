@@ -18,7 +18,9 @@
     "test:integration": "npm run build:server && vitest run packages/integration-tests",
     "server": "npm run build:server && node packages/server-main/dist/index.js",
     "server:remote-run": "npm run --prefix packages/server-remote-acp build && node packages/server-remote-acp/dist/remote-run.js",
-    "mcp:cli": "npm run --prefix packages/server-main build && node packages/server-main/dist/mcp-cli.js --config mcp-stdio.json"
+    "mcp:cli": "npm run --prefix packages/server-main build && node packages/server-main/dist/mcp-cli.js --config mcp-stdio.json",
+    "telegram-acp-rm-client": "npm run build:server && node packages/telegram-acp-rm-client/dist/index.js",
+    "telegram-acp-rm-client:dev": "npm run --prefix packages/telegram-acp-rm-client dev"
   },
   "dependencies": {
     "cors": "^2.8.5",
