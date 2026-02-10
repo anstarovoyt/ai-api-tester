@@ -1,21 +1,19 @@
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
+import { test, expect, beforeAll, afterAll } from "vitest";
 
-const test = require("node:test");
-const assert = require("assert/strict");
-
-const { loadAcpConfig, getAcpAgents, resolveAcpAgentConfig } = require("../dist/acp-config.js");
+import { loadAcpConfig, getAcpAgents, resolveAcpAgentConfig } from "../src/acp-config";
 
 let tempDir: string;
 let configPath: string;
 
-test.before(() => {
+beforeAll(() => {
   tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "server-main-test-"));
   configPath = path.join(tempDir, "acp.json");
 });
 
-test.after(() => {
+afterAll(() => {
   if (tempDir) {
     fs.rmSync(tempDir, { recursive: true, force: true });
   }
@@ -23,7 +21,7 @@ test.after(() => {
 
 test("loadAcpConfig returns null for non-existent file", () => {
   const result = loadAcpConfig("/nonexistent/path/config.json");
-  assert.equal(result, null);
+  expect(result).toBeNull();
 });
 
 test("loadAcpConfig parses valid JSON config", () => {
@@ -31,7 +29,7 @@ test("loadAcpConfig parses valid JSON config", () => {
   fs.writeFileSync(configPath, JSON.stringify(config), "utf8");
 
   const result = loadAcpConfig(configPath);
-  assert.deepEqual(result, config);
+  expect(result).toEqual(config);
 });
 
 test("loadAcpConfig parses JSON5 with comments", () => {
@@ -44,13 +42,13 @@ test("loadAcpConfig parses JSON5 with comments", () => {
   fs.writeFileSync(configPath, configText, "utf8");
 
   const result = loadAcpConfig(configPath);
-  assert.ok(result);
-  assert.ok(result.agent_servers.TestAgent);
+  expect(result).toBeTruthy();
+  expect(result!.agent_servers.TestAgent).toBeTruthy();
 });
 
 test("getAcpAgents returns null for non-existent config", () => {
   const result = getAcpAgents("/nonexistent/path/config.json");
-  assert.equal(result, null);
+  expect(result).toBeNull();
 });
 
 test("getAcpAgents returns agent list", () => {
@@ -63,36 +61,30 @@ test("getAcpAgents returns agent list", () => {
   fs.writeFileSync(configPath, JSON.stringify(config), "utf8");
 
   const result = getAcpAgents(configPath);
-  assert.ok(Array.isArray(result));
-  assert.equal(result.length, 2);
-  assert.ok(result.some((a: any) => a.name === "Agent1" && a.command === "node"));
-  assert.ok(result.some((a: any) => a.name === "Agent2" && a.command === "python"));
+  expect(Array.isArray(result)).toBe(true);
+  expect(result!.length).toBe(2);
+  expect(result!.some((a: any) => a.name === "Agent1" && a.command === "node")).toBe(true);
+  expect(result!.some((a: any) => a.name === "Agent2" && a.command === "python")).toBe(true);
 });
 
 test("resolveAcpAgentConfig throws for non-existent config", () => {
-  assert.throws(
-    () => resolveAcpAgentConfig("TestAgent", "/nonexistent/path/config.json"),
-    /ACP config not found/
-  );
+  expect(() => resolveAcpAgentConfig("TestAgent", "/nonexistent/path/config.json"))
+    .toThrow(/ACP config not found/);
 });
 
 test("resolveAcpAgentConfig throws for empty agent_servers", () => {
   fs.writeFileSync(configPath, JSON.stringify({ agent_servers: {} }), "utf8");
 
-  assert.throws(
-    () => resolveAcpAgentConfig(undefined, configPath),
-    /does not define any agent_servers/
-  );
+  expect(() => resolveAcpAgentConfig(undefined, configPath))
+    .toThrow(/does not define any agent_servers/);
 });
 
 test("resolveAcpAgentConfig throws for unknown agent", () => {
   const config = { agent_servers: { Agent1: { command: "node" } } };
   fs.writeFileSync(configPath, JSON.stringify(config), "utf8");
 
-  assert.throws(
-    () => resolveAcpAgentConfig("UnknownAgent", configPath),
-    /Unknown ACP agent/
-  );
+  expect(() => resolveAcpAgentConfig("UnknownAgent", configPath))
+    .toThrow(/Unknown ACP agent/);
 });
 
 test("resolveAcpAgentConfig resolves named agent", () => {
@@ -105,8 +97,8 @@ test("resolveAcpAgentConfig resolves named agent", () => {
   fs.writeFileSync(configPath, JSON.stringify(config), "utf8");
 
   const result = resolveAcpAgentConfig("Agent2", configPath);
-  assert.equal(result.name, "Agent2");
-  assert.equal(result.config.command, "python");
+  expect(result.name).toBe("Agent2");
+  expect(result.config.command).toBe("python");
 });
 
 test("resolveAcpAgentConfig returns first agent when no name provided", () => {
@@ -119,7 +111,7 @@ test("resolveAcpAgentConfig returns first agent when no name provided", () => {
   fs.writeFileSync(configPath, JSON.stringify(config), "utf8");
 
   const result = resolveAcpAgentConfig(undefined, configPath);
-  assert.equal(result.name, "FirstAgent");
+  expect(result.name).toBe("FirstAgent");
 });
 
 test("resolveAcpAgentConfig preserves non-string env values", () => {
@@ -141,10 +133,10 @@ test("resolveAcpAgentConfig preserves non-string env values", () => {
   fs.writeFileSync(configPath, configText, "utf8");
 
   const result = resolveAcpAgentConfig("TestAgent", configPath);
-  assert.equal(result.config.env.STRING_VAL, "hello");
-  assert.equal(result.config.env.NUM_VAL, 123);
-  assert.equal(result.config.env.BOOL_VAL, true);
-  assert.deepEqual(result.config.env.OBJ_VAL, { key: "value" });
-  assert.deepEqual(result.config.env.ARR_VAL, [1, 2, 3]);
-  assert.equal(result.config.env.NULL_VAL, null);
+  expect(result.config.env.STRING_VAL).toBe("hello");
+  expect(result.config.env.NUM_VAL).toBe(123);
+  expect(result.config.env.BOOL_VAL).toBe(true);
+  expect(result.config.env.OBJ_VAL).toEqual({ key: "value" });
+  expect(result.config.env.ARR_VAL).toEqual([1, 2, 3]);
+  expect(result.config.env.NULL_VAL).toBeNull();
 });

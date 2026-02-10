@@ -5,10 +5,10 @@ A full-stack API testing tool for OpenAI-compatible APIs, MCP, A2A, and ACP prot
 ## Features
 
 ### Supported Protocols
-- **OpenAI API** – Full support for OpenAI-compatible endpoints including chat completions, embeddings, images, audio, and more
-- **MCP (Model Context Protocol)** – Testing interface for MCP APIs
-- **A2A (Agent-to-Agent)** – Testing interface for A2A communication protocols
-- **ACP (Agent Client Protocol)** – Testing interface for ACP APIs
+- **OpenAI API** - Full support for OpenAI-compatible endpoints including chat completions, embeddings, images, audio, and more
+- **MCP (Model Context Protocol)** - Testing interface for MCP APIs
+- **A2A (Agent-to-Agent)** - Testing interface for A2A communication protocols
+- **ACP (Agent Client Protocol)** - Testing interface for ACP APIs
 
 ### Frontend (React + TypeScript)
 - Tabbed interface for different API protocols
@@ -28,15 +28,25 @@ A full-stack API testing tool for OpenAI-compatible APIs, MCP, A2A, and ACP prot
 
 ## Tech Stack
 
-**Frontend:** React 19, TypeScript, Vite, Tailwind CSS
+**Frontend:** React 19, TypeScript, Vite 7, Tailwind CSS 4
 
-**Backend:** Node.js, Express, http-proxy-middleware
+**Backend:** Node.js, Express, http-proxy-middleware, WebSocket (ws)
+
+## Monorepo Structure
+
+| Package | Description |
+|---------|-------------|
+| `packages/frontend` | React + Vite frontend application |
+| `packages/server-main` | Gateway server (Express) with OpenAI proxy, MCP, and ACP JSON-RPC |
+| `packages/server-remote-acp` | ACP WebSocket servers (including remote-run) |
+| `packages/acp-runtime` | ACP stdio runtime |
+| `packages/integration-tests` | Integration tests for the project |
 
 ## Setup Instructions
 
 ### Prerequisites
 - Node.js (v18+)
-- npm or yarn
+- npm
 
 ### Installation
 ```bash
@@ -64,6 +74,23 @@ npm run client
 npm run build
 ```
 
+### Running Tests
+```bash
+# Run all tests
+npm test
+
+# Run tests for specific packages
+npm run test:acp-runtime
+npm run test:server-main
+npm run test:server-remote-acp
+npm run test:integration
+```
+
+### Type Checking
+```bash
+npm run typecheck
+```
+
 ## Usage
 
 1. Open `http://localhost:3000` in your browser
@@ -79,12 +106,12 @@ The proxy server forwards requests to `http://localhost:1234` by default, making
 
 ## API Endpoints
 
-| Endpoint                           | Description                                         |
-|------------------------------------|-----------------------------------------------------|
-| `http://localhost:3000`            | Frontend application                                |
-| `http://localhost:3001/`           | Gateway server (OpenAI proxy + MCP + ACP JSON-RPC)  |
-| `ws://localhost:3001/acp`          | ACP WebSocket proxy (gateway)                       |
-| `ws://localhost:3011/acp`          | ACP Remote Run WebSocket server                     |
+| Endpoint | Description |
+|----------|-------------|
+| `http://localhost:3000` | Frontend application |
+| `http://localhost:3001/` | Gateway server (OpenAI proxy + MCP + ACP JSON-RPC) |
+| `ws://localhost:3001/acp` | ACP WebSocket proxy (gateway) |
+| `ws://localhost:3011/acp` | ACP Remote Run WebSocket server |
 | `http://localhost:3011/acp/agents` | Lists local ACP agents from `~/.jetbrains/acp.json` |
 
 ## ACP Remote Run Server
@@ -97,20 +124,23 @@ npm run server:remote-run
 
 Environment variables:
 
-- `ACP_REMOTE_PORT` (default: `3011`)
-- `ACP_REMOTE_PATH` (default: `/acp`)
-- `ACP_REMOTE_TOKEN` (optional)
-- `ACP_REMOTE_GIT_ROOT` (default: `~/git`)
-- `ACP_REMOTE_SESSION_IDLE_TTL_MS` (default: `1800000`) - how long to keep sessions/worktrees after last disconnect
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `ACP_REMOTE_PORT` | `3011` | Server port |
+| `ACP_REMOTE_PATH` | `/acp` | WebSocket path |
+| `ACP_REMOTE_TOKEN` | - | Optional authentication token |
+| `ACP_REMOTE_GIT_ROOT` | `~/git` | Root directory for git repositories |
+| `ACP_REMOTE_SESSION_IDLE_TTL_MS` | `1800000` | Session/worktree idle timeout (30 min) |
 
 Notes:
 
 - `~/.jetbrains/acp.json` is parsed as JSON5 (comments and trailing commas allowed)
-- Agent `env` values in `agent_servers` are passed to the local ACP process; non-string values are stringified and `null`/`undefined` removes the variable.
+- Agent `env` values in `agent_servers` are passed to the local ACP process; non-string values are stringified and `null`/`undefined` removes the variable
 
-## Monorepo Structure
+## Documentation
 
-- `packages/frontend` - React + Vite frontend
-- `packages/server-main` - Gateway server (Express)
-- `packages/server-remote-acp` - ACP WebSocket servers (including remote-run)
-- `packages/acp-runtime` - ACP stdio runtime
+See the [specs](./specs/README.md) directory for detailed documentation:
+
+- [Protocol Overview](./specs/protocol/overview.md)
+- [Architecture](./specs/architecture/index.md)
+- [Remote Run Implementation](./specs/implementation/remote-run.md)

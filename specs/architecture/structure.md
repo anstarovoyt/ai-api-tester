@@ -1,6 +1,6 @@
 ## Technologies
 
-Let's try to use the latest version of packages and TypeScript as the main language. 
+Let's try to use the latest version of the packages and TypeScript as the main language. 
 Vite is used for bundling and package.json tasks for running / building the app.
 
 TypeScript code should be without any suppressions of errors and without compiling errors.
