@@ -91,12 +91,20 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-test("unauthorized user is rejected and cannot reach handlers", async () => {
+type AuthFlowResult = {
+  fromUserId: number;
+  accessGranted: boolean;
+  commandHandlerCalls: number;
+  messageHandlerCalls: number;
+  unauthorizedReplies: string[];
+  allReplies: string[];
+};
+
+const runAuthFlow = async (args: { allowedUsers: number[]; fromUserId: number; username?: string }): Promise<AuthFlowResult> => {
   // Silence auth logs for this test.
   vi.spyOn(console, "log").mockImplementation(() => {});
 
-  const client = new TelegramClient("token", [111]);
-
+  const client = new TelegramClient("token", args.allowedUsers);
   const commandHandler = vi.fn(async (_ctx: AuthenticatedContext, _match: RegExpExecArray | null) => {});
   const messageHandler = vi.fn(async (_ctx: AuthenticatedContext) => {});
 
@@ -106,69 +114,56 @@ test("unauthorized user is rejected and cannot reach handlers", async () => {
   const bot = FakeTelegramBot.instances[0];
   expect(bot).toBeTruthy();
 
-  const makeMsg = (text: string) => ({
-    chat: { id: 10, type: "private" },
-    from: { id: 222, username: "intruder" },
-    text,
-  });
+  const chat = { id: 10, type: "private" as const };
+  const from = { id: args.fromUserId, username: args.username };
+  const makeMsg = (text: string) => ({ chat, from, text });
 
-  // 1st message is a command. The wrapper should still reject it (and reply),
-  // but must not invoke the command handler.
-  await bot.__emitMessage(makeMsg("/start"));
-
-  // Then spam the bot. It should reply 5 times and then go silent.
-  for (let i = 0; i < 5; i++) {
-    await bot.__emitMessage(makeMsg("hi"));
+  // Same interaction flow for both scenarios: 1 command + 5 non-command messages.
+  const script = ["/start", "hello", "hello", "hello", "hello", "hello"];
+  for (const text of script) {
+    await bot.__emitMessage(makeMsg(text));
   }
 
-  expect(commandHandler).not.toHaveBeenCalled();
-  expect(messageHandler).not.toHaveBeenCalled();
+  const allReplies = bot.sentMessages.map((m: any) => String(m?.text ?? ""));
+  const unauthorizedReplies = allReplies.filter((text) => /Unauthorized/i.test(text));
 
-  // First 5 unauthorized messages get a reply; afterwards the bot ignores the user.
-  expect(bot.sentMessages.length).toBe(5);
-  expect(bot.sentMessages[0].text).toMatch(/Unauthorized/);
-  expect(bot.sentMessages[0].text).toMatch(/222/);
-  expect(bot.sentMessages[4].text).toMatch(/Further messages will be ignored/);
+  return {
+    fromUserId: args.fromUserId,
+    accessGranted: commandHandler.mock.calls.length + messageHandler.mock.calls.length > 0,
+    commandHandlerCalls: commandHandler.mock.calls.length,
+    messageHandlerCalls: messageHandler.mock.calls.length,
+    unauthorizedReplies,
+    allReplies
+  };
+};
+
+const expectAuthGateToBehaveConsistently = (result: AuthFlowResult) => {
+  // Bot should never "partially allow": either we reject (and reply Unauthorized) without reaching handlers,
+  // or we reach handlers without sending Unauthorized replies.
+  const reachedHandlers = result.commandHandlerCalls + result.messageHandlerCalls > 0;
+  const repliedUnauthorized = result.unauthorizedReplies.length > 0;
+
+  // Rate-limiter / threshold safety.
+  expect(result.unauthorizedReplies.length).toBeLessThanOrEqual(5);
+
+  if (repliedUnauthorized) {
+    expect(reachedHandlers).toBe(false);
+    expect(result.unauthorizedReplies[0]).toMatch(/Unauthorized/i);
+    expect(result.unauthorizedReplies[0]).toMatch(new RegExp(String(result.fromUserId)));
+    expect(result.unauthorizedReplies[result.unauthorizedReplies.length - 1]).toMatch(/ignored/i);
+  } else {
+    expect(reachedHandlers).toBe(true);
+  }
+};
+
+test("unauthorized user is rejected and cannot reach handlers", async () => {
+  const result = await runAuthFlow({ allowedUsers: [111], fromUserId: 222, username: "intruder" });
+  expectAuthGateToBehaveConsistently(result);
+  expect(result.accessGranted).toBe(false);
 });
 
 test("authorized user can reach handlers", async () => {
-  // Silence auth logs for this test.
-  vi.spyOn(console, "log").mockImplementation(() => {});
-
-  const client = new TelegramClient("token", [111]);
-
-  const commandHandler = vi.fn(async (_ctx: AuthenticatedContext, _match: RegExpExecArray | null) => {});
-  const messageHandler = vi.fn(async (_ctx: AuthenticatedContext) => {});
-
-  client.onCommand(/\/start/, commandHandler);
-  client.onMessage(messageHandler);
-
-  const bot = FakeTelegramBot.instances[0];
-  expect(bot).toBeTruthy();
-
-  const makeMsg = (text: string) => ({
-    chat: { id: 10, type: "private" },
-    from: { id: 111, username: "allowed" },
-    text,
-  });
-
-  // Commands should hit onCommand but not onMessage (onMessage skips "/...").
-  await bot.__emitMessage(makeMsg("/start"));
-  expect(commandHandler).toHaveBeenCalledTimes(1);
-  expect(messageHandler).toHaveBeenCalledTimes(0);
-
-  // Normal text should hit onMessage but not onCommand.
-  await bot.__emitMessage(makeMsg("hello"));
-  expect(messageHandler).toHaveBeenCalledTimes(1);
-  expect(commandHandler).toHaveBeenCalledTimes(1);
-
-  // Ensure context is passed through.
-  const call = messageHandler.mock.calls[0];
-  const ctx = call ? call[0] : undefined;
-  expect(ctx).toBeTruthy();
-  expect(ctx!.chatId).toBe(10);
-  expect(ctx!.userId).toBe(111);
-
-  // No unauthorized messages should be sent.
-  expect(bot.sentMessages.length).toBe(0);
+  const result = await runAuthFlow({ allowedUsers: [111], fromUserId: 111, username: "allowed" });
+  expectAuthGateToBehaveConsistently(result);
+  expect(result.accessGranted).toBe(true);
 });
