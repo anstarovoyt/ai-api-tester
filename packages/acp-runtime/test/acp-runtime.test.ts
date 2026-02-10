@@ -1,5 +1,5 @@
-import { test, expect } from "vitest";
-import { ACPRuntime } from "../src/index";
+import {expect, test} from "vitest";
+import {ACPRuntime} from "../src";
 
 test("ACPRuntime constructor accepts valid config", () => {
   const config = { command: "echo", args: ["hello"] };
