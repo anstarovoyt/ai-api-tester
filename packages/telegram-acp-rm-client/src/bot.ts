@@ -8,6 +8,16 @@ export class TelegramAcpBot {
   private readonly sessionManager: SessionManager;
   private readonly config: ReturnType<typeof getEffectiveConfig>;
   private availableAgents: Array<{ name: string; command: string; args: string[] }> = [];
+  private readonly commands = [
+    { command: "start", description: "Welcome message" },
+    { command: "help", description: "Show help" },
+    { command: "new", description: "Start a new session" },
+    { command: "end", description: "End current session" },
+    { command: "status", description: "Show current status" },
+    { command: "agents", description: "List available agents" },
+    { command: "agent", description: "Select agent for new sessions" },
+    { command: "cancel", description: "Cancel current request" },
+  ];
 
   private log(message: string, extra?: any): void {
     if (extra !== undefined) {
@@ -351,6 +361,14 @@ ${sessionInfo}
       const message = err instanceof Error ? err.message : String(err);
       this.logError("Telegram token verification failed.", { error: message });
       throw new Error(`Telegram token verification failed: ${message}`);
+    }
+
+    // Register commands so they show up as autocomplete in the Telegram UI.
+    try {
+      await this.client.setMyCommands(this.commands);
+      this.log("Telegram commands registered.", { commands: this.commands.map((c) => c.command) });
+    } catch (err) {
+      this.logWarn("Could not register Telegram commands.", { error: err instanceof Error ? err.message : String(err) });
     }
 
     // Fetch available agents on startup

@@ -64,6 +64,10 @@ export class TelegramClient {
     return await this.bot.getMe();
   }
 
+  async setMyCommands(commands: TelegramBot.BotCommand[]): Promise<void> {
+    await this.bot.setMyCommands(commands);
+  }
+
   private log(message: string, extra?: any): void {
     if (extra !== undefined) {
       console.log(`[TELEGRAM] ${message}`, extra);
