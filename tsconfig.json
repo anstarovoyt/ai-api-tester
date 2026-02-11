@@ -2,9 +2,9 @@
   "files": [],
   "references": [
     { "path": "./packages/acp-runtime" },
+    { "path": "./packages/deployers" },
     { "path": "./packages/server-remote-acp" },
     { "path": "./packages/server-main" },
     { "path": "./packages/telegram-acp-rm-client" }
   ]
 }
-

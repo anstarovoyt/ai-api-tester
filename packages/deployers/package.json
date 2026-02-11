@@ -1,5 +1,5 @@
 {
-  "name": "@api-tester/server-remote-acp",
+  "name": "@api-tester/deployers",
   "version": "2026.1.0",
   "private": true,
   "type": "commonjs",
@@ -7,9 +7,10 @@
   "types": "dist/index.d.ts",
   "scripts": {
     "build": "tsc -b",
-    "dev:remote-run": "npm run build && npm run start:remote-run",
-    "start:remote-run": "node dist/remote-run.js",
-    "test": "vitest run",
     "typecheck": "tsc -b"
+  },
+  "dependencies": {
+    "node-ssh": "^13.2.1",
+    "readline-sync": "^1.4.10"
   }
 }
