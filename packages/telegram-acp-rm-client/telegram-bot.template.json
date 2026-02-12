@@ -7,5 +7,10 @@
   "acpRemoteHttpUrl": "http://localhost:3011",
   "acpRemoteToken": "",
   "defaultAgent": "",
+  "defaultRemote": {
+    "url": "git@github.com:user/repo.git",
+    "branch": "main",
+    "revision": "origin/main"
+  },
   "requestTimeoutMs": 600000
 }

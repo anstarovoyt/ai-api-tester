@@ -16,6 +16,7 @@ export class TelegramAcpBot {
     { command: "status", description: "Show current status" },
     { command: "agents", description: "List available agents" },
     { command: "agent", description: "Select agent for new sessions" },
+    { command: "repo", description: "Configure git repo for remote-run sessions" },
     { command: "cancel", description: "Cancel current request" },
   ];
 
@@ -66,10 +67,46 @@ export class TelegramAcpBot {
         requestTimeoutMs: this.config.requestTimeoutMs,
         reconnectIntervalMs: this.config.reconnectIntervalMs,
         maxReconnectAttempts: this.config.maxReconnectAttempts,
-      })
+      }),
+      this.config.defaultRemote
     );
 
     this.setupHandlers();
+  }
+
+  private looksLikeGitRemoteUrl(value: string): boolean {
+    const trimmed = String(value || "").trim();
+    if (!trimmed) {
+      return false;
+    }
+    if (trimmed.startsWith("http://") || trimmed.startsWith("https://") || trimmed.startsWith("ssh://")) {
+      return true;
+    }
+    return /^[^@\s]+@[^:\s]+:.+/.test(trimmed);
+  }
+
+  private parseRemoteSpec(spec: string): { url: string; branch: string; revision: string } | null {
+    const trimmed = String(spec || "").trim();
+    if (!trimmed) {
+      return null;
+    }
+    const parts = trimmed.split(/\s+/).filter(Boolean);
+    if (parts.length === 0) {
+      return null;
+    }
+    if (parts.length > 3) {
+      return null;
+    }
+    const url = parts[0];
+    if (!this.looksLikeGitRemoteUrl(url)) {
+      return null;
+    }
+
+    const branch = parts[1] || "main";
+    // ACP remote-run server needs a revision; default to the remote head for the branch.
+    const revision = parts[2] || `origin/${branch}`;
+
+    return { url, branch, revision };
   }
 
   private setupHandlers(): void {
@@ -85,6 +122,9 @@ Welcome to the ACP Telegram Bot!
 /status - Show current session status
 /agents - List available agents
 /agent <name> - Select an agent for new sessions
+/repo - Show current repo settings
+/repo <git_url> [branch] [revision] - Set repo for remote-run sessions (defaults: branch=main, revision=origin/<branch>)
+/repo clear - Clear repo settings
 /cancel - Cancel current request
 /help - Show this help message
 
@@ -106,10 +146,14 @@ ACP Server: ${this.config.acpRemoteUrl}
 *ACP Telegram Bot Commands:*
 
 /new [cwd] - Start a new session (optional: working directory)
+/new <git_url> [branch] [revision] - Start a new remote-run session using a git repo (defaults: branch=main, revision=origin/<branch>)
 /end - End the current session
 /status - Show session info
 /agents - List available ACP agents
 /agent <name> - Set agent for new sessions
+/repo - Show current repo settings
+/repo <git_url> [branch] [revision] - Set repo for remote-run sessions (defaults: branch=main, revision=origin/<branch>)
+/repo clear - Clear repo settings
 /cancel - Cancel the current request
 /help - Show this message
 
@@ -121,12 +165,30 @@ Send any text message to interact with the agent.
 
     // /new - Start new session
     this.client.onCommand(/\/new(?:\s+(.+))?/, async ({ chatId, userId }, match) => {
-      const cwd = match?.[1]?.trim();
-      this.log("Command received: /new", { chatId, userId, cwd: cwd || null });
+      const rawArg = match?.[1]?.trim() || "";
+      const firstToken = rawArg.split(/\s+/).filter(Boolean)[0] || "";
+
+      const looksLikeRemote = Boolean(firstToken && this.looksLikeGitRemoteUrl(firstToken));
+      const remoteOverride = looksLikeRemote ? this.parseRemoteSpec(rawArg) : null;
+      const cwd = !remoteOverride && rawArg ? rawArg : undefined;
+
+      this.log("Command received: /new", { chatId, userId, cwd: cwd || null, remote: remoteOverride ? { url: remoteOverride.url, branch: remoteOverride.branch, revision: remoteOverride.revision } : null });
 
       try {
+        if (looksLikeRemote && !remoteOverride) {
+          await this.client.sendLongMessage(
+            chatId,
+            "Invalid remote repo spec.\n\nUsage:\n`/new <git_url> [branch] [revision]`\nExamples:\n`/new git@github.com:user/repo.git main`\n`/new https://github.com/user/repo.git main abc123def`",
+            "Markdown"
+          );
+          return;
+        }
+
         this.client.startTyping(chatId);
-        const session = await this.sessionManager.createSession(userId, chatId, cwd);
+        const session = await this.sessionManager.createSession(userId, chatId, {
+          cwd,
+          remote: remoteOverride ? remoteOverride : (cwd ? null : undefined)
+        });
         this.client.stopTyping(chatId);
 
         this.log("Session created.", { chatId, userId, agent: session.agent, sessionId: session.sessionId, cwd: session.cwd || null });
@@ -163,10 +225,12 @@ Send any text message to interact with the agent.
       this.log("Command received: /status", { chatId, userId });
       const prefs = this.sessionManager.getPreferences(userId);
       const sessionInfo = this.sessionManager.getSessionInfo(userId, chatId);
+      const repo = prefs.remote;
       const status = `
 *User Preferences:*
 Selected Agent: ${prefs.selectedAgent || "default"}
 ${prefs.defaultCwd ? `Default CWD: ${prefs.defaultCwd}` : ""}
+${repo ? `Repo: \`${repo.url}\`\nBranch: \`${repo.branch || ""}\`\nRevision: \`${repo.revision}\`` : "Repo: (not set)"}
 
 *Session Status:*
 ${sessionInfo}
@@ -236,6 +300,42 @@ ${sessionInfo}
         chatId,
         `Agent set to: ${agentName}\n\nThis will be used for new sessions. Use /new to start a session with this agent.`
       );
+    });
+
+    // /repo - Configure git repo for remote-run sessions
+    this.client.onCommand(/\/repo(?:\s+(.+))?/, async ({ chatId, userId }, match) => {
+      const raw = match?.[1]?.trim() || "";
+      this.log("Command received: /repo", { chatId, userId, raw: raw || null });
+
+      if (!raw) {
+        const prefs = this.sessionManager.getPreferences(userId);
+        const repo = prefs.remote;
+        await this.client.sendLongMessage(chatId, repo ? (
+          `*Current Repo Settings:*\nURL: \`${repo.url}\`\nBranch: \`${repo.branch || ""}\`\nRevision: \`${repo.revision}\``
+        ) : (
+          "*Current Repo Settings:*\n(not set)\n\nUse `/repo <git_url> [branch] [revision]` to set it."
+        ), "Markdown");
+        return;
+      }
+
+      if (/^(clear|none|off|unset)$/i.test(raw)) {
+        this.sessionManager.clearRemote(userId);
+        await this.client.sendMessage(chatId, "Repo settings cleared.");
+        return;
+      }
+
+      const parsed = this.parseRemoteSpec(raw);
+      if (!parsed) {
+        await this.client.sendLongMessage(
+          chatId,
+          "Invalid repo spec.\n\nUsage:\n`/repo <git_url> [branch] [revision]`\nExamples:\n`/repo git@github.com:user/repo.git main`\n`/repo https://github.com/user/repo.git main abc123def`\n\nTo clear:\n`/repo clear`",
+          "Markdown"
+        );
+        return;
+      }
+
+      this.sessionManager.setRemote(userId, parsed);
+      await this.client.sendMessage(chatId, `Repo set:\nURL: ${parsed.url}\nBranch: ${parsed.branch}\nRevision: ${parsed.revision}`);
     });
 
     // /cancel - Cancel current request

@@ -24,9 +24,23 @@ export type AcpClientOptions = {
   maxReconnectAttempts?: number;
 };
 
+export type RemoteGitInfo = {
+  url: string;
+  branch?: string;
+  revision: string;
+};
+
 export type SessionInfo = {
   sessionId: string;
   cwd?: string;
+};
+
+export type InitializeResponse = {
+  protocolVersion: number;
+  agentCapabilities?: unknown;
+  authMethods?: unknown;
+  agentInfo?: unknown;
+  _meta?: unknown;
 };
 
 export type PromptResult = {
@@ -54,6 +68,8 @@ export class AcpClient extends EventEmitter {
   private reconnectAttempts = 0;
   private isConnecting = false;
   private shouldReconnect = true;
+  private initialized = false;
+  private initializePromise: Promise<void> | null = null;
 
   constructor(options: AcpClientOptions) {
     super();
@@ -108,6 +124,9 @@ export class AcpClient extends EventEmitter {
       this.ws.on("open", () => {
         this.isConnecting = false;
         this.reconnectAttempts = 0;
+        // New socket, requires initialize handshake again.
+        this.initialized = false;
+        this.initializePromise = null;
         this.emit("open");
         resolve();
       });
@@ -118,6 +137,8 @@ export class AcpClient extends EventEmitter {
 
       this.ws.on("close", (code, reason) => {
         this.isConnecting = false;
+        this.initialized = false;
+        this.initializePromise = null;
         this.emit("close", code, reason.toString("utf8"));
         this.rejectAllPending(new Error(`Connection closed: ${code}`));
         this.attemptReconnect();
@@ -131,6 +152,40 @@ export class AcpClient extends EventEmitter {
         }
       });
     });
+  }
+
+  private async ensureInitialized(): Promise<void> {
+    if (this.initialized) {
+      return;
+    }
+    if (this.initializePromise) {
+      return await this.initializePromise;
+    }
+
+    this.initializePromise = (async () => {
+      await this.connect();
+      await this.sendRequestInternal<InitializeResponse>("initialize", {
+        protocolVersion: 1,
+        clientCapabilities: {
+          fs: { readTextFile: false, writeTextFile: false },
+          terminal: false
+        },
+        clientInfo: {
+          name: "telegram-acp-rm-client",
+          version: "2026.1.0"
+        }
+      });
+      this.initialized = true;
+    })();
+
+    try {
+      await this.initializePromise;
+    } finally {
+      // Allow retry after failure.
+      if (!this.initialized) {
+        this.initializePromise = null;
+      }
+    }
   }
 
   private attemptReconnect(): void {
@@ -210,7 +265,7 @@ export class AcpClient extends EventEmitter {
     return this.requestIdCounter++;
   }
 
-  async sendRequest<T = unknown>(method: string, params?: unknown): Promise<T> {
+  private async sendRequestInternal<T = unknown>(method: string, params?: unknown): Promise<T> {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
       await this.connect();
     }
@@ -237,6 +292,14 @@ export class AcpClient extends EventEmitter {
     });
   }
 
+  async sendRequest<T = unknown>(method: string, params?: unknown): Promise<T> {
+    // Per ACP spec, initialize should be called once per WebSocket connection.
+    if (method !== "initialize") {
+      await this.ensureInitialized();
+    }
+    return await this.sendRequestInternal<T>(method, params);
+  }
+
   sendNotification(method: string, params?: unknown): void {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
       return;
@@ -249,10 +312,13 @@ export class AcpClient extends EventEmitter {
     this.ws.send(JSON.stringify(notification));
   }
 
-  async createSession(cwd?: string): Promise<SessionInfo> {
-    const params: Record<string, unknown> = {};
-    if (cwd) {
-      params.cwd = cwd;
+  async createSession(options?: { cwd?: string; remote?: RemoteGitInfo }): Promise<SessionInfo> {
+    const params: Record<string, unknown> = {
+      cwd: options?.cwd ?? "",
+      mcpServers: []
+    };
+    if (options?.remote) {
+      params._meta = { remote: options.remote };
     }
     const result = await this.sendRequest<{ sessionId: string; cwd?: string }>("session/new", params);
     return {
@@ -264,10 +330,10 @@ export class AcpClient extends EventEmitter {
   async sendPrompt(sessionId: string, prompt: string): Promise<PromptResult> {
     return await this.sendRequest<PromptResult>("session/prompt", {
       sessionId,
-      messages: [
+      prompt: [
         {
-          role: "user",
-          content: {type: "text", text: prompt},
+          type: "text",
+          text: prompt
         },
       ],
     });

@@ -40,6 +40,11 @@ export const ACP_REMOTE_HTTP_URL = process.env.ACP_REMOTE_HTTP_URL || "http://lo
 export const ACP_REMOTE_TOKEN = process.env.ACP_REMOTE_TOKEN || "";
 export const ACP_DEFAULT_AGENT = process.env.ACP_DEFAULT_AGENT || "";
 
+// Default git repo for ACP remote-run sessions (optional)
+export const ACP_DEFAULT_REMOTE_URL = process.env.ACP_DEFAULT_REMOTE_URL || "";
+export const ACP_DEFAULT_REMOTE_BRANCH = process.env.ACP_DEFAULT_REMOTE_BRANCH || "";
+export const ACP_DEFAULT_REMOTE_REVISION = process.env.ACP_DEFAULT_REMOTE_REVISION || "";
+
 // Timeouts
 export const ACP_REQUEST_TIMEOUT_MS = parsePositiveNumber(process.env.ACP_REQUEST_TIMEOUT_MS, 600_000);
 export const ACP_RECONNECT_INTERVAL_MS = parsePositiveNumber(process.env.ACP_RECONNECT_INTERVAL_MS, 5_000);
@@ -55,6 +60,11 @@ export type BotConfig = {
   acpRemoteHttpUrl?: string;
   acpRemoteToken?: string;
   defaultAgent?: string;
+  defaultRemote?: {
+    url?: string;
+    branch?: string;
+    revision?: string;
+  };
   requestTimeoutMs?: number;
 };
 
@@ -78,11 +88,28 @@ export const getEffectiveConfig = (): {
   acpRemoteHttpUrl: string;
   acpRemoteToken: string;
   defaultAgent: string;
+  defaultRemote?: {
+    url: string;
+    branch: string;
+    revision: string;
+  };
   requestTimeoutMs: number;
   reconnectIntervalMs: number;
   maxReconnectAttempts: number;
 } => {
   const fileConfig = loadBotConfig();
+
+  const defaultRemoteFromEnv = ACP_DEFAULT_REMOTE_URL ? {
+    url: ACP_DEFAULT_REMOTE_URL,
+    branch: ACP_DEFAULT_REMOTE_BRANCH || "main",
+    revision: ACP_DEFAULT_REMOTE_REVISION || `origin/${ACP_DEFAULT_REMOTE_BRANCH || "main"}`
+  } : null;
+
+  const defaultRemoteFromFile = fileConfig?.defaultRemote?.url ? {
+    url: fileConfig.defaultRemote.url,
+    branch: fileConfig.defaultRemote.branch || "main",
+    revision: fileConfig.defaultRemote.revision || `origin/${fileConfig.defaultRemote.branch || "main"}`
+  } : null;
 
   return {
     telegramToken: TELEGRAM_BOT_TOKEN || fileConfig?.telegramToken || "",
@@ -93,6 +120,7 @@ export const getEffectiveConfig = (): {
     acpRemoteHttpUrl: ACP_REMOTE_HTTP_URL || fileConfig?.acpRemoteHttpUrl || "http://localhost:3011",
     acpRemoteToken: ACP_REMOTE_TOKEN || fileConfig?.acpRemoteToken || "",
     defaultAgent: ACP_DEFAULT_AGENT || fileConfig?.defaultAgent || "",
+    defaultRemote: defaultRemoteFromEnv || defaultRemoteFromFile || undefined,
     requestTimeoutMs: fileConfig?.requestTimeoutMs || ACP_REQUEST_TIMEOUT_MS,
     reconnectIntervalMs: ACP_RECONNECT_INTERVAL_MS,
     maxReconnectAttempts: ACP_MAX_RECONNECT_ATTEMPTS,

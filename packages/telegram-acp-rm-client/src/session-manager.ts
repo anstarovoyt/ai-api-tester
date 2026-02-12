@@ -1,4 +1,4 @@
-import {AcpClient, PromptResult} from "./acp-client";
+import {AcpClient, type PromptResult, type RemoteGitInfo} from "./acp-client";
 
 export type UserSession = {
   sessionId: string;
@@ -15,6 +15,7 @@ export type UserPreferences = {
   userId: number;
   selectedAgent: string;
   defaultCwd?: string;
+  remote?: RemoteGitInfo;
 };
 
 export class SessionManager {
@@ -26,11 +27,13 @@ export class SessionManager {
   // leakage of progress notifications, only allow one in-flight prompt per client.
   private activePromptClients = new Set<AcpClient>();
   private readonly defaultAgent: string;
+  private readonly defaultRemote: RemoteGitInfo | undefined;
   private readonly createClientFn: (agent: string) => AcpClient;
 
-  constructor(defaultAgent: string, createClientFn: (agent: string) => AcpClient) {
+  constructor(defaultAgent: string, createClientFn: (agent: string) => AcpClient, defaultRemote?: RemoteGitInfo) {
     this.defaultAgent = defaultAgent;
     this.createClientFn = createClientFn;
+    this.defaultRemote = defaultRemote;
   }
 
   getPreferences(userId: number): UserPreferences {
@@ -39,6 +42,7 @@ export class SessionManager {
       prefs = {
         userId,
         selectedAgent: this.defaultAgent,
+        remote: this.defaultRemote,
       };
       this.preferences.set(userId, prefs);
     }
@@ -48,6 +52,16 @@ export class SessionManager {
   setSelectedAgent(userId: number, agent: string): void {
     const prefs = this.getPreferences(userId);
     prefs.selectedAgent = agent;
+  }
+
+  setRemote(userId: number, remote: RemoteGitInfo): void {
+    const prefs = this.getPreferences(userId);
+    prefs.remote = remote;
+  }
+
+  clearRemote(userId: number): void {
+    const prefs = this.getPreferences(userId);
+    delete prefs.remote;
   }
   private getOrCreateClient(agent: string): AcpClient {
     let client = this.acpClients.get(agent);
@@ -87,7 +101,11 @@ export class SessionManager {
     const session = this.getSession(userId, chatId);
     return session?.isProcessing ?? false;
   }
-  async createSession(userId: number, chatId: number, cwd?: string): Promise<UserSession> {
+  async createSession(
+    userId: number,
+    chatId: number,
+    options?: { cwd?: string; remote?: RemoteGitInfo | null }
+  ): Promise<UserSession> {
     // End existing session in this chat first
     await this.endSession(userId, chatId);
 
@@ -96,7 +114,9 @@ export class SessionManager {
     const client = this.getOrCreateClient(agent);
 
     await client.connect();
-    const sessionInfo = await client.createSession(cwd || prefs.defaultCwd);
+    const remoteResolved = options?.remote === undefined ? prefs.remote : (options.remote || undefined);
+    const cwdResolved = remoteResolved ? (options?.cwd ?? "") : (options?.cwd || prefs.defaultCwd || process.cwd());
+    const sessionInfo = await client.createSession({ cwd: cwdResolved, remote: remoteResolved });
 
     const session: UserSession = {
       sessionId: sessionInfo.sessionId,
