@@ -7,10 +7,19 @@
   "acpRemoteHttpUrl": "http://localhost:3011",
   "acpRemoteToken": "",
   "defaultAgent": "",
-  "defaultRemote": {
-    "url": "git@github.com:user/repo.git",
-    "branch": "main",
-    "revision": "origin/main"
-  },
+  "repos": [
+    {
+      "name": "repo-1",
+      "url": "git@github.com:user/repo.git",
+      "branch": "main",
+      "revision": "origin/main"
+    },
+    {
+      "name": "repo-2",
+      "url": "git@github.com:user/another-repo.git",
+      "branch": "main",
+      "revision": "origin/main"
+    }
+  ],
   "requestTimeoutMs": 600000
 }

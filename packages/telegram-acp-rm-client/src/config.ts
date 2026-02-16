@@ -2,6 +2,7 @@ import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 import * as JSON5 from "json5";
+import type { RemoteGitInfo } from "./acp-client";
 
 const resolveHomeDir = (value: unknown) => {
   if (typeof value !== "string") {
@@ -53,6 +54,20 @@ export const ACP_MAX_RECONNECT_ATTEMPTS = parsePositiveNumber(process.env.ACP_MA
 // Bot Configuration File (optional)
 export const BOT_CONFIG_PATH = process.env.BOT_CONFIG_PATH || path.join(os.homedir(), ".jetbrains", "telegram-bot.json");
 
+export type RepoConfigEntry = {
+  name?: string;
+  url?: string;
+  branch?: string;
+  revision?: string;
+};
+
+export type NormalizedRepoConfigEntry = {
+  name: string;
+  url: string;
+  branch: string;
+  revision: string;
+};
+
 export type BotConfig = {
   telegramToken?: string;
   allowedUsers?: number[];
@@ -60,11 +75,10 @@ export type BotConfig = {
   acpRemoteHttpUrl?: string;
   acpRemoteToken?: string;
   defaultAgent?: string;
-  defaultRemote?: {
-    url?: string;
-    branch?: string;
-    revision?: string;
-  };
+  // Back-compat: older configs used "defaultRemote".
+  defaultRemote?: RepoConfigEntry;
+  // New preferred format: list of repos. First entry becomes the default.
+  repos?: RepoConfigEntry[];
   requestTimeoutMs?: number;
 };
 
@@ -81,6 +95,54 @@ export const loadBotConfig = (configPath: string = BOT_CONFIG_PATH): BotConfig |
   }
 };
 
+const deriveRepoNameFromUrl = (remoteUrl: string): string => {
+  const trimmed = String(remoteUrl || "").trim();
+  if (!trimmed) {
+    return "";
+  }
+  // git@host:owner/repo(.git)
+  const sshMatch = trimmed.match(/^[^@\s]+@[^:\s]+:(.+)$/);
+  if (sshMatch) {
+    const pathPart = sshMatch[1] || "";
+    const segments = pathPart.split("/").filter(Boolean);
+    const last = segments[segments.length - 1] || "";
+    return last.replace(/\.git$/i, "");
+  }
+  // ssh://..., https://..., http://...
+  if (trimmed.startsWith("ssh://") || trimmed.startsWith("https://") || trimmed.startsWith("http://")) {
+    try {
+      const url = new URL(trimmed);
+      const segments = (url.pathname || "").split("/").filter(Boolean);
+      const last = segments[segments.length - 1] || "";
+      return last.replace(/\.git$/i, "");
+    } catch {
+      return "";
+    }
+  }
+  return "";
+};
+
+const normalizeRepoConfigEntry = (value: unknown, fallbackName: string): NormalizedRepoConfigEntry | null => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+  const item = value as Record<string, unknown>;
+  const url = typeof item.url === "string" ? item.url.trim() : "";
+  if (!url) {
+    return null;
+  }
+
+  const branch = typeof item.branch === "string" && item.branch.trim() ? item.branch.trim() : "main";
+  const revision = typeof item.revision === "string" && item.revision.trim() ? item.revision.trim() : `origin/${branch}`;
+
+  const derivedName = deriveRepoNameFromUrl(url);
+  const name = typeof item.name === "string" && item.name.trim()
+    ? item.name.trim()
+    : (derivedName || fallbackName);
+
+  return { name, url, branch, revision };
+};
+
 export const getEffectiveConfig = (): {
   telegramToken: string;
   allowedUsers: number[];
@@ -88,28 +150,47 @@ export const getEffectiveConfig = (): {
   acpRemoteHttpUrl: string;
   acpRemoteToken: string;
   defaultAgent: string;
-  defaultRemote?: {
-    url: string;
-    branch: string;
-    revision: string;
-  };
+  repos: NormalizedRepoConfigEntry[];
+  defaultRemote?: RemoteGitInfo;
   requestTimeoutMs: number;
   reconnectIntervalMs: number;
   maxReconnectAttempts: number;
 } => {
   const fileConfig = loadBotConfig();
 
-  const defaultRemoteFromEnv = ACP_DEFAULT_REMOTE_URL ? {
+  const repos: NormalizedRepoConfigEntry[] = [];
+
+  const defaultRepoFromEnv = ACP_DEFAULT_REMOTE_URL ? normalizeRepoConfigEntry({
+    name: "default",
     url: ACP_DEFAULT_REMOTE_URL,
     branch: ACP_DEFAULT_REMOTE_BRANCH || "main",
-    revision: ACP_DEFAULT_REMOTE_REVISION || `origin/${ACP_DEFAULT_REMOTE_BRANCH || "main"}`
-  } : null;
+    revision: ACP_DEFAULT_REMOTE_REVISION || ""
+  }, "default") : null;
+  if (defaultRepoFromEnv) {
+    repos.push(defaultRepoFromEnv);
+  }
 
-  const defaultRemoteFromFile = fileConfig?.defaultRemote?.url ? {
-    url: fileConfig.defaultRemote.url,
-    branch: fileConfig.defaultRemote.branch || "main",
-    revision: fileConfig.defaultRemote.revision || `origin/${fileConfig.defaultRemote.branch || "main"}`
-  } : null;
+  const fileReposRaw: unknown = fileConfig?.repos;
+  if (Array.isArray(fileReposRaw)) {
+    let index = 1;
+    for (const entry of fileReposRaw) {
+      const normalized = normalizeRepoConfigEntry(entry, `repo-${index}`);
+      index += 1;
+      if (normalized) {
+        repos.push(normalized);
+      }
+    }
+  } else if (fileConfig?.defaultRemote) {
+    // Back-compat: older configs only supported a single defaultRemote.
+    const normalized = normalizeRepoConfigEntry({ name: "default", ...(fileConfig.defaultRemote as any) }, "default");
+    if (normalized) {
+      repos.push(normalized);
+    }
+  }
+
+  const defaultRemote: RemoteGitInfo | undefined = repos.length > 0
+    ? { url: repos[0].url, branch: repos[0].branch, revision: repos[0].revision }
+    : undefined;
 
   return {
     telegramToken: TELEGRAM_BOT_TOKEN || fileConfig?.telegramToken || "",
@@ -120,7 +201,8 @@ export const getEffectiveConfig = (): {
     acpRemoteHttpUrl: ACP_REMOTE_HTTP_URL || fileConfig?.acpRemoteHttpUrl || "http://localhost:3011",
     acpRemoteToken: ACP_REMOTE_TOKEN || fileConfig?.acpRemoteToken || "",
     defaultAgent: ACP_DEFAULT_AGENT || fileConfig?.defaultAgent || "",
-    defaultRemote: defaultRemoteFromEnv || defaultRemoteFromFile || undefined,
+    repos,
+    defaultRemote,
     requestTimeoutMs: fileConfig?.requestTimeoutMs || ACP_REQUEST_TIMEOUT_MS,
     reconnectIntervalMs: ACP_RECONNECT_INTERVAL_MS,
     maxReconnectAttempts: ACP_MAX_RECONNECT_ATTEMPTS,

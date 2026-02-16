@@ -16,7 +16,7 @@ export class TelegramAcpBot {
     { command: "status", description: "Show current status" },
     { command: "agents", description: "List available agents" },
     { command: "agent", description: "Select agent for new sessions" },
-    { command: "repo", description: "Configure git repo for remote-run sessions" },
+    { command: "repo", description: "Select repo for remote-run sessions" },
     { command: "cancel", description: "Cancel current request" },
   ];
 
@@ -109,6 +109,25 @@ export class TelegramAcpBot {
     return { url, branch, revision };
   }
 
+  private formatRepoListForMessage(userId: number): string {
+    const repos = this.config.repos || [];
+    if (repos.length === 0) {
+      return "_No repos configured in the bot config._";
+    }
+
+    const prefs = this.sessionManager.getPreferences(userId);
+    const selected = prefs.remote;
+    const selectedIndex = selected
+      ? repos.findIndex((r) => r.url === selected.url && r.branch === (selected.branch || "") && r.revision === selected.revision)
+      : -1;
+
+    return repos.map((repo, idx) => {
+      const isSelected = idx === selectedIndex;
+      const mark = isSelected ? " (selected)" : "";
+      return `${idx + 1}. ${repo.name}${mark}\n   \`${repo.url}\` @ \`${repo.revision}\``;
+    }).join("\n");
+  }
+
   private setupHandlers(): void {
     // /start - Welcome message and help
     this.client.onCommand(/\/start/, async ({ chatId, userId }) => {
@@ -123,8 +142,11 @@ Welcome to the ACP Telegram Bot!
 /agents - List available agents
 /agent <name> - Select an agent for new sessions
 /repo - Show current repo settings
-/repo <git_url> [branch] [revision] - Set repo for remote-run sessions (defaults: branch=main, revision=origin/<branch>)
-/repo clear - Clear repo settings
+/repo list - List configured repos
+/repo <n|name> - Switch to a configured repo
+/repo <git_url> [branch] [revision] - Use a custom repo for remote-run sessions (defaults: branch=main, revision=origin/<branch>)
+/repo clear - Reset to default repo (first in config)
+/repo off - Disable remote-run repo (use local cwd)
 /cancel - Cancel current request
 /help - Show this help message
 
@@ -152,8 +174,11 @@ ACP Server: ${this.config.acpRemoteUrl}
 /agents - List available ACP agents
 /agent <name> - Set agent for new sessions
 /repo - Show current repo settings
-/repo <git_url> [branch] [revision] - Set repo for remote-run sessions (defaults: branch=main, revision=origin/<branch>)
-/repo clear - Clear repo settings
+/repo list - List configured repos
+/repo <n|name> - Switch to a configured repo
+/repo <git_url> [branch] [revision] - Use a custom repo for remote-run sessions (defaults: branch=main, revision=origin/<branch>)
+/repo clear - Reset to default repo (first in config)
+/repo off - Disable remote-run repo (use local cwd)
 /cancel - Cancel the current request
 /help - Show this message
 
@@ -310,17 +335,57 @@ ${sessionInfo}
       if (!raw) {
         const prefs = this.sessionManager.getPreferences(userId);
         const repo = prefs.remote;
-        await this.client.sendLongMessage(chatId, repo ? (
-          `*Current Repo Settings:*\nURL: \`${repo.url}\`\nBranch: \`${repo.branch || ""}\`\nRevision: \`${repo.revision}\``
-        ) : (
-          "*Current Repo Settings:*\n(not set)\n\nUse `/repo <git_url> [branch] [revision]` to set it."
-        ), "Markdown");
+        const header = repo
+          ? `*Current Repo:*\nURL: \`${repo.url}\`\nBranch: \`${repo.branch || ""}\`\nRevision: \`${repo.revision}\``
+          : "*Current Repo:*\n(off)";
+        const list = `\n\n*Configured Repos:*\n${this.formatRepoListForMessage(userId)}`;
+        await this.client.sendLongMessage(chatId, `${header}${list}`, "Markdown");
         return;
       }
 
-      if (/^(clear|none|off|unset)$/i.test(raw)) {
+      if (/^(list|ls)$/i.test(raw)) {
+        await this.client.sendLongMessage(chatId, `*Configured Repos:*\n${this.formatRepoListForMessage(userId)}`, "Markdown");
+        return;
+      }
+
+      if (/^(off|none|disable)$/i.test(raw)) {
+        this.sessionManager.disableRemote(userId);
+        await this.client.sendMessage(chatId, "Remote-run repo disabled. Use `/repo clear` to reset to default.", "Markdown");
+        return;
+      }
+
+      if (/^(clear|reset|default)$/i.test(raw)) {
         this.sessionManager.clearRemote(userId);
-        await this.client.sendMessage(chatId, "Repo settings cleared.");
+        await this.client.sendMessage(chatId, this.config.defaultRemote ? "Repo reset to default." : "Repo cleared.");
+        return;
+      }
+
+      const repos = this.config.repos || [];
+      if (repos.length > 0) {
+        const asIndex = Number(raw);
+        if (Number.isInteger(asIndex) && asIndex >= 1 && asIndex <= repos.length) {
+          const chosen = repos[asIndex - 1];
+          this.sessionManager.setRemote(userId, { url: chosen.url, branch: chosen.branch, revision: chosen.revision });
+          await this.client.sendMessage(chatId, `Repo selected: ${chosen.name}\nURL: ${chosen.url}\nBranch: ${chosen.branch}\nRevision: ${chosen.revision}`);
+          return;
+        }
+        const lowered = raw.toLowerCase();
+        const matchByName = repos.find((r) => r.name.toLowerCase() === lowered);
+        if (matchByName) {
+          this.sessionManager.setRemote(userId, { url: matchByName.url, branch: matchByName.branch, revision: matchByName.revision });
+          await this.client.sendMessage(chatId, `Repo selected: ${matchByName.name}\nURL: ${matchByName.url}\nBranch: ${matchByName.branch}\nRevision: ${matchByName.revision}`);
+          return;
+        }
+      }
+
+      const firstToken = raw.split(/\s+/).filter(Boolean)[0] || "";
+      const looksLikeRemote = Boolean(firstToken && this.looksLikeGitRemoteUrl(firstToken));
+      if (!looksLikeRemote) {
+        await this.client.sendLongMessage(
+          chatId,
+          `Unknown repo "${raw}".\n\nUse \`/repo list\` to see configured repos, or set a custom repo via:\n\`/repo <git_url> [branch] [revision]\``,
+          "Markdown"
+        );
         return;
       }
 
@@ -328,7 +393,7 @@ ${sessionInfo}
       if (!parsed) {
         await this.client.sendLongMessage(
           chatId,
-          "Invalid repo spec.\n\nUsage:\n`/repo <git_url> [branch] [revision]`\nExamples:\n`/repo git@github.com:user/repo.git main`\n`/repo https://github.com/user/repo.git main abc123def`\n\nTo clear:\n`/repo clear`",
+          "Invalid repo spec.\n\nUsage:\n`/repo <git_url> [branch] [revision]`\nExamples:\n`/repo git@github.com:user/repo.git main`\n`/repo https://github.com/user/repo.git main abc123def`\n\nTo list configured repos:\n`/repo list`\n\nTo reset:\n`/repo clear`",
           "Markdown"
         );
         return;

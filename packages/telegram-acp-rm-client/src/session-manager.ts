@@ -1,4 +1,5 @@
 import {AcpClient, type PromptResult, type RemoteGitInfo} from "./acp-client";
+import * as path from "path";
 
 export type UserSession = {
   sessionId: string;
@@ -61,6 +62,15 @@ export class SessionManager {
 
   clearRemote(userId: number): void {
     const prefs = this.getPreferences(userId);
+    if (this.defaultRemote) {
+      prefs.remote = this.defaultRemote;
+    } else {
+      delete prefs.remote;
+    }
+  }
+
+  disableRemote(userId: number): void {
+    const prefs = this.getPreferences(userId);
     delete prefs.remote;
   }
   private getOrCreateClient(agent: string): AcpClient {
@@ -115,7 +125,9 @@ export class SessionManager {
 
     await client.connect();
     const remoteResolved = options?.remote === undefined ? prefs.remote : (options.remote || undefined);
-    const cwdResolved = remoteResolved ? (options?.cwd ?? "") : (options?.cwd || prefs.defaultCwd || process.cwd());
+    // ACP session/new expects an absolute cwd. For remote-run sessions the server will override cwd anyway,
+    // but keeping this absolute avoids issues if the endpoint is not a remote-run server.
+    const cwdResolved = path.resolve(String(options?.cwd || prefs.defaultCwd || process.cwd()));
     const sessionInfo = await client.createSession({ cwd: cwdResolved, remote: remoteResolved });
 
     const session: UserSession = {
