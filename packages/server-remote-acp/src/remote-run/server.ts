@@ -2,10 +2,13 @@ import * as http from "http";
 import {WebSocket, WebSocketServer} from "ws";
 import {
   ACP_CONFIG,
+  ACP_REMOTE_CONFIG,
   ACP_REMOTE_ADVERTISE_HOST,
   ACP_REMOTE_ADVERTISE_PROTOCOL,
   ACP_REMOTE_BIND_HOST,
   ACP_REMOTE_GIT_ROOT,
+  ACP_REMOTE_GIT_ROOT_MAP,
+  ACP_REMOTE_GIT_ROOT_MAP_SOURCE_LABEL,
   ACP_REMOTE_GIT_ROOT_SOURCE,
   ACP_REMOTE_GIT_ROOT_SOURCE_LABEL,
   ACP_REMOTE_PATH,
@@ -159,7 +162,10 @@ export const startAcpRemoteRunServer = () => {
   log("Git root configured.", {
     gitRoot: ACP_REMOTE_GIT_ROOT,
     gitRootSource: ACP_REMOTE_GIT_ROOT_SOURCE,
-    gitRootSourceLabel: ACP_REMOTE_GIT_ROOT_SOURCE_LABEL
+    gitRootSourceLabel: ACP_REMOTE_GIT_ROOT_SOURCE_LABEL,
+    gitRootMapEntries: Object.keys(ACP_REMOTE_GIT_ROOT_MAP || {}).length,
+    gitRootMapSourceLabel: ACP_REMOTE_GIT_ROOT_MAP_SOURCE_LABEL,
+    acpRemoteConfig: ACP_REMOTE_CONFIG
   });
 
   const httpServer = http.createServer((req, res) => {
@@ -560,7 +566,8 @@ export const startAcpRemoteRunServer = () => {
     log(`WebSocket endpoint -> ${wsProtocol}://${ACP_REMOTE_ADVERTISE_HOST}:${ACP_REMOTE_PORT}${expectedPath}`);
     log(`Agents endpoint -> ${baseUrl}/acp/agents`);
     log(`ACP config -> ${ACP_CONFIG}`);
-    log(`Git root -> ${ACP_REMOTE_GIT_ROOT}`);
+    log(`ACP remote config -> ${ACP_REMOTE_CONFIG}`);
+    log(`Default git root -> ${ACP_REMOTE_GIT_ROOT}`);
   });
 
   return httpServer;

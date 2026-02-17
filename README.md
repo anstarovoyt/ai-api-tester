@@ -132,6 +132,28 @@ Environment variables:
 | `ACP_REMOTE_GIT_ROOT` | `~/git` | Root directory for git repositories |
 | `ACP_REMOTE_SESSION_IDLE_TTL_MS` | `1800000` | Session/worktree idle timeout (30 min) |
 
+Optional config file:
+
+- `~/.jetbrains/acp-remote.json` (JSON5) is loaded if present.
+- Set `ACP_REMOTE_CONFIG` to use a different config file location.
+- Config keys use regular JSON names (camelCase), e.g. `port`, `path`, `gitRoot`, `sessionIdleTtlMs`, etc.
+- Env vars take precedence over `acp-remote.json`.
+- Per-repo git root overrides can be configured via `gitRootMap`:
+
+```json5
+{
+  // Default git root (used when no mapping matches)
+  gitRoot: "~/git",
+
+  // Optional per-repo overrides: "<git-url>" -> "<git-root-dir>"
+  // Keys may be full git URLs (ssh/https) or "host/owner/repo" or "owner/repo" or just "repo".
+  gitRootMap: {
+    "git@github.com:my-org/ultimate.git": "~/ultimate",
+    "github.com/my-org/special-repo": "~/ultimate"
+  }
+}
+```
+
 Notes:
 
 - `~/.jetbrains/acp.json` is parsed as JSON5 (comments and trailing commas allowed)

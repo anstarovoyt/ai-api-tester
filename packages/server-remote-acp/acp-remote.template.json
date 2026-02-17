@@ -1,0 +1,28 @@
+{
+  "port": 3011,
+  "path": "/acp",
+  "token": "",
+  "agent": "",
+  "bindHost": "0.0.0.0",
+  "advertiseHost": "localhost",
+  "advertiseProtocol": "http",
+  "gitRoot": "~/git",
+  "gitRootMap": {
+    "git@github.com:my-org/ultimate.git": "~/ultimate"
+  },
+  "requestTimeoutMs": 600000,
+  "sessionIdleTtlMs": 1800000,
+  "gitUserName": "ACP Remote",
+  "gitUserEmail": "acp-remote@localhost",
+  "push": true,
+  "verbose": true,
+  "logPayloads": false,
+  "logRpcPayloads": true,
+  "logRpcNotificationPayloads": false,
+  "coalesceSessionUpdates": true,
+  "sessionUpdateLogFlushMs": 2000,
+  "logMaxChars": 50000,
+  "logMaxStringChars": 4000,
+  "color": true
+}
+

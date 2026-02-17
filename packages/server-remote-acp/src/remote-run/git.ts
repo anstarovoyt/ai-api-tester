@@ -4,6 +4,8 @@ import * as fs from "fs";
 import * as path from "path";
 import {
   ACP_REMOTE_GIT_ROOT,
+  ACP_REMOTE_GIT_ROOT_MAP,
+  ACP_REMOTE_GIT_ROOT_MAP_SOURCE_LABEL,
   ACP_REMOTE_GIT_ROOT_SOURCE,
   ACP_REMOTE_GIT_ROOT_SOURCE_LABEL,
   ACP_REMOTE_GIT_USER_EMAIL,
@@ -91,6 +93,121 @@ const isSameRepo = (urlA: unknown, urlB: unknown) => {
   return String(urlA || "").trim() === String(urlB || "").trim();
 };
 
+export type GitRootResolution = {
+  gitRoot: string;
+  gitRootSource: string;
+  gitRootSourceLabel: string;
+  gitRootMapKey?: string;
+  gitRootMapMatch?: "sameRepo" | "repoId" | "repoPath" | "repoName";
+};
+
+const normalizeRepoKey = (value: string): { repoId?: string; repoPath?: string; repoName?: string } => {
+  const trimmed = String(value || "").trim();
+  if (!trimmed) {
+    return {};
+  }
+
+  const parsed = parseGitRemote(trimmed);
+  if (parsed) {
+    const repoPath = parsed.repoPath.toLowerCase();
+    const repoId = `${parsed.host}/${parsed.repoPath}`.toLowerCase();
+    const segments = parsed.repoPath.split("/").filter(Boolean);
+    const repoName = (segments[segments.length - 1] || "").toLowerCase();
+    return { repoId, repoPath, repoName };
+  }
+
+  let cleaned = trimmed.replace(/^\/+/, "").replace(/\.git$/i, "");
+  const hostPathMatch = cleaned.match(/^([^/\s]+):(.+)$/);
+  if (hostPathMatch) {
+    const host = hostPathMatch[1];
+    const repoPath = String(hostPathMatch[2] || "").replace(/^\/+/, "");
+    const segments = repoPath.split("/").filter(Boolean);
+    const repoName = (segments[segments.length - 1] || "").toLowerCase();
+    return { repoId: `${host}/${repoPath}`.toLowerCase(), repoPath: repoPath.toLowerCase(), repoName };
+  }
+
+  cleaned = cleaned.replace(/^\/+/, "");
+  if (cleaned.includes("/")) {
+    const segments = cleaned.split("/").filter(Boolean);
+    const repoName = (segments[segments.length - 1] || "").toLowerCase();
+    // Heuristic: hostnames usually include a dot.
+    if (segments.length >= 3 && segments[0].includes(".")) {
+      const host = segments[0];
+      const repoPath = segments.slice(1).join("/");
+      return { repoId: `${host}/${repoPath}`.toLowerCase(), repoPath: repoPath.toLowerCase(), repoName };
+    }
+    return { repoPath: cleaned.toLowerCase(), repoName };
+  }
+
+  return { repoName: cleaned.toLowerCase() };
+};
+
+export const resolveGitRootForRemoteUrl = (
+  remoteUrl: unknown,
+  options: {
+    defaultRoot: { gitRoot: string; gitRootSource: string; gitRootSourceLabel: string };
+    gitRootMap: Record<string, string>;
+    gitRootMapSourceLabel: string;
+  }
+): GitRootResolution => {
+  const parsedRemote = parseGitRemote(remoteUrl);
+  if (!parsedRemote) {
+    return { ...options.defaultRoot };
+  }
+
+  const remoteRepoPath = parsedRemote.repoPath.toLowerCase();
+  const remoteRepoId = `${parsedRemote.host}/${parsedRemote.repoPath}`.toLowerCase();
+  const remoteSegments = parsedRemote.repoPath.split("/").filter(Boolean);
+  const remoteRepoName = (remoteSegments[remoteSegments.length - 1] || "").toLowerCase();
+
+  let best: { key: string; root: string; score: number; match: GitRootResolution["gitRootMapMatch"] } | null = null;
+  for (const [key, root] of Object.entries(options.gitRootMap || {})) {
+    const trimmedKey = String(key || "").trim();
+    if (!trimmedKey || !root) {
+      continue;
+    }
+
+    if (isSameRepo(trimmedKey, remoteUrl)) {
+      best = { key: trimmedKey, root, score: 4, match: "sameRepo" };
+      break;
+    }
+
+    const normalized = normalizeRepoKey(trimmedKey);
+    if (normalized.repoId && normalized.repoId === remoteRepoId) {
+      const next = { key: trimmedKey, root, score: 3, match: "repoId" as const };
+      if (!best || next.score > best.score) {
+        best = next;
+      }
+      continue;
+    }
+    if (normalized.repoPath && normalized.repoPath === remoteRepoPath) {
+      const next = { key: trimmedKey, root, score: 2, match: "repoPath" as const };
+      if (!best || next.score > best.score) {
+        best = next;
+      }
+      continue;
+    }
+    if (normalized.repoName && normalized.repoName === remoteRepoName) {
+      const next = { key: trimmedKey, root, score: 1, match: "repoName" as const };
+      if (!best || next.score > best.score) {
+        best = next;
+      }
+    }
+  }
+
+  if (!best) {
+    return { ...options.defaultRoot };
+  }
+
+  return {
+    gitRoot: best.root,
+    gitRootSource: best.root,
+    gitRootSourceLabel: options.gitRootMapSourceLabel,
+    gitRootMapKey: best.key,
+    gitRootMapMatch: best.match
+  };
+};
+
 const repoLocks = new Map<string, Promise<unknown>>();
 
 const withRepoLock = async <T>(key: string, fn: () => Promise<T>) => {
@@ -170,17 +287,28 @@ export const ensureRepoWorkdir = async (remote: RemoteGitInfo, runId: string, no
   }
 
   const remoteUrlForLogs = String(redactGitUrl(remote.url));
+  const gitRootResolution = resolveGitRootForRemoteUrl(remote.url, {
+    defaultRoot: {
+      gitRoot: ACP_REMOTE_GIT_ROOT,
+      gitRootSource: ACP_REMOTE_GIT_ROOT_SOURCE,
+      gitRootSourceLabel: ACP_REMOTE_GIT_ROOT_SOURCE_LABEL
+    },
+    gitRootMap: ACP_REMOTE_GIT_ROOT_MAP,
+    gitRootMapSourceLabel: ACP_REMOTE_GIT_ROOT_MAP_SOURCE_LABEL
+  });
+  const gitRoot = gitRootResolution.gitRoot;
+
   const segments = parsed.repoPath.split("/").filter(Boolean);
   const repoName = segments[segments.length - 1] || "repo";
   const owner = segments[0] || "owner";
-  const preferredRepoDir = path.join(ACP_REMOTE_GIT_ROOT, repoName);
+  const preferredRepoDir = path.join(gitRoot, repoName);
   const candidateRepoDirs = Array.from(new Set([
     preferredRepoDir,
-    path.join(ACP_REMOTE_GIT_ROOT, parsed.host, ...segments),
-    path.join(ACP_REMOTE_GIT_ROOT, ...segments),
-    path.join(ACP_REMOTE_GIT_ROOT, owner, repoName),
-    path.join(ACP_REMOTE_GIT_ROOT, `${owner}-${repoName}`),
-    path.join(ACP_REMOTE_GIT_ROOT, parsed.host, repoName)
+    path.join(gitRoot, parsed.host, ...segments),
+    path.join(gitRoot, ...segments),
+    path.join(gitRoot, owner, repoName),
+    path.join(gitRoot, `${owner}-${repoName}`),
+    path.join(gitRoot, parsed.host, repoName)
   ]));
 
   let repoDir = "";
@@ -216,16 +344,16 @@ export const ensureRepoWorkdir = async (remote: RemoteGitInfo, runId: string, no
     }
   }
 
-  if (!repoDir && fs.existsSync(ACP_REMOTE_GIT_ROOT)) {
+  if (!repoDir && fs.existsSync(gitRoot)) {
     repoDirReason = "no match in candidates; scanning git root";
     const scanned: any[] = [];
     try {
-      const dirents = fs.readdirSync(ACP_REMOTE_GIT_ROOT, { withFileTypes: true });
+      const dirents = fs.readdirSync(gitRoot, { withFileTypes: true });
       for (const dirent of dirents) {
         if (!dirent.isDirectory()) {
           continue;
         }
-        const candidate = path.join(ACP_REMOTE_GIT_ROOT, dirent.name);
+        const candidate = path.join(gitRoot, dirent.name);
         if (!fs.existsSync(path.join(candidate, ".git"))) {
           continue;
         }
@@ -243,7 +371,7 @@ export const ensureRepoWorkdir = async (remote: RemoteGitInfo, runId: string, no
         }
       }
       if (ACP_REMOTE_VERBOSE) {
-        logDebug("Git root scan results.", { gitRoot: ACP_REMOTE_GIT_ROOT, scanned });
+        logDebug("Git root scan results.", { gitRoot, scanned });
       }
     } catch {
       // ignore
@@ -259,14 +387,16 @@ export const ensureRepoWorkdir = async (remote: RemoteGitInfo, runId: string, no
     repoDirReason = `cloning into ${cloneTarget}`;
   }
 
-  const worktreesRoot = path.join(ACP_REMOTE_GIT_ROOT, ".acp-remote-worktrees", repoName);
+  const worktreesRoot = path.join(gitRoot, ".acp-remote-worktrees", repoName);
   const workdir = path.join(worktreesRoot, runId);
   const branchName = `agent/changes-${sanitizeBranchComponent(runId).slice(0, 24)}`;
 
   log("Git workdir selection.", {
-    gitRoot: ACP_REMOTE_GIT_ROOT,
-    gitRootSource: ACP_REMOTE_GIT_ROOT_SOURCE,
-    gitRootSourceLabel: ACP_REMOTE_GIT_ROOT_SOURCE_LABEL,
+    gitRoot,
+    gitRootSource: gitRootResolution.gitRootSource,
+    gitRootSourceLabel: gitRootResolution.gitRootSourceLabel,
+    gitRootMapKey: gitRootResolution.gitRootMapKey ? redactGitUrl(gitRootResolution.gitRootMapKey) : undefined,
+    gitRootMapMatch: gitRootResolution.gitRootMapMatch,
     preferredRepoDir,
     repoDir,
     repoDirReason,
@@ -285,9 +415,11 @@ export const ensureRepoWorkdir = async (remote: RemoteGitInfo, runId: string, no
     });
   }
   notify("git/dir", "Resolved git directories", {
-    gitRoot: ACP_REMOTE_GIT_ROOT,
-    gitRootSource: ACP_REMOTE_GIT_ROOT_SOURCE,
-    gitRootSourceLabel: ACP_REMOTE_GIT_ROOT_SOURCE_LABEL,
+    gitRoot,
+    gitRootSource: gitRootResolution.gitRootSource,
+    gitRootSourceLabel: gitRootResolution.gitRootSourceLabel,
+    gitRootMapKey: gitRootResolution.gitRootMapKey ? redactGitUrl(gitRootResolution.gitRootMapKey) : undefined,
+    gitRootMapMatch: gitRootResolution.gitRootMapMatch,
     repoName,
     repoDir,
     repoDirReason,
